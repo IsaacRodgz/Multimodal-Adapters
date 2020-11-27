@@ -30,7 +30,6 @@ from mmbt.data.helpers import get_data_loaders
 from mmbt.models import get_model
 from mmbt.utils.logger import create_logger
 from mmbt.utils.utils import *
-from mmbt.models.vilbert import BertConfig
 
 from os.path import expanduser
 import os
