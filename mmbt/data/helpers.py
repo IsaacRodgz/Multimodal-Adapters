@@ -67,7 +67,7 @@ def get_glove_words(path):
 
 def get_vocab(args):
     vocab = Vocab()
-    if args.model in ["mmadapter", "adapter"]:
+    if args.model in ["mmadapter", "adapter", "mmadapterfull"]:
         bert_tokenizer = BertTokenizer.from_pretrained(
             args.bert_model, do_lower_case=True
         )
@@ -132,7 +132,7 @@ def collate_fn(batch, args):
 
 
 def get_data_loaders(args, data_all=None, partition_index=None):
-    if args.model in ["mmadapter", "adapter"]:
+    if args.model in ["mmadapter", "adapter", "mmadapterfull"]:
         tokenizer = (
             BertTokenizer.from_pretrained(args.bert_model, do_lower_case=True).tokenize
         )

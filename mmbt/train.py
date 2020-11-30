@@ -34,7 +34,7 @@ from mmbt.utils.utils import *
 from os.path import expanduser
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="1,2"
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
 
 def get_args(parser):
     parser.add_argument("--batch_sz", type=int, default=128)
@@ -57,7 +57,7 @@ def get_args(parser):
     parser.add_argument("--lr_patience", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--max_seq_len", type=int, default=512)
-    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter"])
+    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter", "mmadapterfull"])
     parser.add_argument("--n_workers", type=int, default=12)
     parser.add_argument("--name", type=str, default="nameless")
     parser.add_argument("--num_image_embeds", type=int, default=1)
@@ -99,7 +99,7 @@ def get_criterion(args):
 
 
 def get_optimizer(model, args):
-    if args.model in ["adapter", "mmadapter"]:
+    if args.model in ["adapter", "mmadapter", "mmadapterfull"]:
         param_optimizer = np.array(list(model.named_parameters()))
         zero_grad_mask = []
     
@@ -208,7 +208,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     elif args.model == "adapter":
         txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
         out = model(txt, mask, segment)
-    elif args.model == "mmadapter":
+    elif args.model in ["mmadapter", "mmadapterfull"]:
         if args.task == "moviescope":
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             img = img.cuda()

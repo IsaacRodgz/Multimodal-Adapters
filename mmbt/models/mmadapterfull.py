@@ -378,6 +378,7 @@ class BertMultimodalAdapter(nn.Module):
         # Up projection
         self.adapter_up = nn.Linear(adapter_size, hidden_size)
         self.m_adapter_up = nn.Linear(adapter_size, m_hidden_size)
+        self.m_dropout = nn.Dropout(0.2)
         
         self.adapter_down.apply(self.init_bert_weights)
         self.adapter_up.apply(self.init_bert_weights)
@@ -389,13 +390,14 @@ class BertMultimodalAdapter(nn.Module):
         adapted_m_hidden_states = self.m_adapter_down(mod)
         
         seq_len = adapted_hidden_states.shape[1]
-        adapted_m_hidden_states = adapted_m_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
-        input_cat = torch.cat((adapted_hidden_states, adapted_m_hidden_states), dim=2)
+        adapted_m_hidden_states_rep = adapted_m_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        input_cat = torch.cat((adapted_hidden_states, adapted_m_hidden_states_rep), dim=2)
         scores = F.sigmoid(self.gate(input_cat))
-        mixed = scores*adapted_hidden_states + (1-scores)*adapted_m_hidden_states
+        mixed = scores*adapted_hidden_states + (1-scores)*adapted_m_hidden_states_rep
         
         adapted_hidden_states = self.adapter_up(mixed)
-        return adapted_hidden_states + hidden_states
+        adapted_m_hidden_states = self.m_dropout(self.m_adapter_up(adapted_m_hidden_states))
+        return adapted_hidden_states + hidden_states, adapted_m_hidden_states + mod
     
     @staticmethod
     def init_bert_weights(module):
@@ -424,9 +426,9 @@ class BertSelfOutput(nn.Module):
     def forward(self, hidden_states, input_tensor, mod=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.Adapter(hidden_states, mod)
+        hidden_states, mod = self.Adapter(hidden_states, mod)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
+        return hidden_states, mod
 
 
 class BertAttention(nn.Module):
@@ -437,8 +439,8 @@ class BertAttention(nn.Module):
 
     def forward(self, input_tensor, attention_mask, mod=None):
         self_output = self.self(input_tensor, attention_mask)
-        attention_output = self.output(self_output, input_tensor, mod)
-        return attention_output
+        attention_output, mod = self.output(self_output, input_tensor, mod)
+        return attention_output, mod
 
 
 class BertOutput(nn.Module):
@@ -452,9 +454,9 @@ class BertOutput(nn.Module):
     def forward(self, hidden_states, input_tensor, mod=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.Adapter(hidden_states, mod)
+        hidden_states, mod = self.Adapter(hidden_states, mod)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
+        return hidden_states, mod
 
 
 class BertLayer(nn.Module):
@@ -465,10 +467,10 @@ class BertLayer(nn.Module):
         self.output = BertOutput(config)
 
     def forward(self, hidden_states, attention_mask, mod=None):
-        attention_output = self.attention(hidden_states, attention_mask, mod)
+        attention_output, mod = self.attention(hidden_states, attention_mask, mod)
         intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output, mod)
-        return layer_output
+        layer_output, mod = self.output(intermediate_output, attention_output, mod)
+        return layer_output, mod
 
 
 class BertEncoder(nn.Module):
@@ -480,7 +482,7 @@ class BertEncoder(nn.Module):
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, mod=None):
         all_encoder_layers = []
         for layer_module in self.layer:
-            hidden_states = layer_module(hidden_states, attention_mask, mod)
+            hidden_states, mod = layer_module(hidden_states, attention_mask, mod)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
         if not output_all_encoded_layers:
@@ -566,140 +568,17 @@ class BertModel(PreTrainedBertModel):
         return encoded_layers, pooled_output
 
 
-class ImageBertEmbeddings(nn.Module):
-    def __init__(self, args, embeddings):
-        super(ImageBertEmbeddings, self).__init__()
-        self.args = args
-        self.img_embeddings = nn.Linear(args.img_hidden_sz, args.hidden_sz)
-        self.position_embeddings = embeddings.position_embeddings
-        self.token_type_embeddings = embeddings.token_type_embeddings
-        self.word_embeddings = embeddings.word_embeddings
-        self.LayerNorm = embeddings.LayerNorm
-        self.dropout = nn.Dropout(p=args.dropout)
-
-    def forward(self, input_imgs, token_type_ids):
-        bsz = input_imgs.size(0)
-        seq_length = self.args.num_image_embeds + 2  # +2 for CLS and SEP Token
-
-        cls_id = torch.LongTensor([self.args.vocab.stoi["[CLS]"]]).cuda()
-        cls_id = cls_id.unsqueeze(0).expand(bsz, 1)
-        cls_token_embeds = self.word_embeddings(cls_id)
-
-        sep_id = torch.LongTensor([self.args.vocab.stoi["[SEP]"]]).cuda()
-        sep_id = sep_id.unsqueeze(0).expand(bsz, 1)
-        sep_token_embeds = self.word_embeddings(sep_id)
-
-        imgs_embeddings = self.img_embeddings(input_imgs)
-        token_embeddings = torch.cat(
-            [cls_token_embeds, imgs_embeddings, sep_token_embeds], dim=1
-        )
-
-        position_ids = torch.arange(seq_length, dtype=torch.long).cuda()
-        position_ids = position_ids.unsqueeze(0).expand(bsz, seq_length)
-        position_embeddings = self.position_embeddings(position_ids)
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = token_embeddings + position_embeddings + token_type_embeddings
-        embeddings = self.LayerNorm(embeddings)
-        embeddings = self.dropout(embeddings)
-        return embeddings
-
-
-class MultimodalBertEncoder(nn.Module):
-    def __init__(self, args):
-        super(MultimodalBertEncoder, self).__init__()
-        self.args = args
-
-        bert = BertModel.from_pretrained(args.bert_model)
-        self.txt_embeddings = bert.embeddings
-            
-        if self.args.pooling == 'cls_att':
-            pooling_dim = 2*args.hidden_sz
-        else:
-            pooling_dim = args.hidden_sz
-
-        self.img_embeddings = ImageBertEmbeddings(args, self.txt_embeddings)
-        self.img_encoder = ImageEncoder(args)
-        self.encoder = bert.encoder
-        self.pooler = bert.pooler
-        self.pooler_custom = nn.Sequential(
-          nn.Linear(pooling_dim, args.hidden_sz),
-          nn.Tanh(),
-        )
-        self.att_query = nn.Parameter(torch.rand(args.hidden_sz))
-        self.clf = nn.Linear(args.hidden_sz, args.n_classes)
-
-    def forward(self, input_txt, attention_mask, segment, input_img):
-        bsz = input_txt.size(0)
-        attention_mask = torch.cat(
-            [
-                torch.ones(bsz, self.args.num_image_embeds + 2).long().cuda(),
-                attention_mask,
-            ],
-            dim=1,
-        )
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = extended_attention_mask.to(
-            dtype=next(self.parameters()).dtype
-        )
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-
-        img_tok = (
-            torch.LongTensor(input_txt.size(0), self.args.num_image_embeds + 2)
-            .fill_(0)
-            .cuda()
-        )
-        img = self.img_encoder(input_img)  # BxNx3x224x224 -> BxNx2048
-        img_embed_out = self.img_embeddings(img, img_tok)
-        txt_embed_out = self.txt_embeddings(input_txt, segment)
-        encoder_input = torch.cat([img_embed_out, txt_embed_out], 1)  # Bx(TEXT+IMG)xHID
-        
-        # Output all encoded layers only for vertical attention on CLS token
-        encoded_layers = self.encoder(
-                encoder_input, extended_attention_mask, output_all_encoded_layers=(self.args.pooling == 'vert_att')
-            )
-        
-        if self.args.pooling == 'cls':
-            output = self.pooler(encoded_layers[-1])
-        
-        elif self.args.pooling == 'att':
-            hidden = encoded_layers[-1]  # Get all hidden vectors of last layer (B, L, hidden_sz)
-            dot = (hidden*self.att_query).sum(-1)  # Matrix of dot products (B, L)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, L, 1)
-            weighted_sum = (hidden*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            output = self.pooler_custom(weighted_sum)
-            
-        elif self.args.pooling == 'cls_att':
-            hidden = encoded_layers[-1]  # Get all hidden vectors of last layer (B, L, hidden_sz)
-            cls_token = hidden[:, 0]  # Extract vector of CLS token
-            word_tokens = hidden[:, 1:]
-            dot = (word_tokens*self.att_query).sum(-1)  # Matrix of dot products (B, L)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, L, 1)
-            weighted_sum = (word_tokens*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            pooler_cat = torch.cat([cls_token, weighted_sum], dim=1)
-            output = self.pooler_custom(pooler_cat)
-        
-        else:
-            hidden = [cls_hidden[:, 0] for cls_hidden in encoded_layers]  # Get all hidden vectors corresponding to CLS token (B, Num_bert_layers, hidden_sz)
-            hidden = torch.stack(hidden, dim=1)  # Convert to tensor (B, Num_bert_layers, hidden_sz)
-            dot = (hidden*self.att_query).sum(-1)  # Matrix of dot products (B, Num_bert_layers)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, Num_bert_layers, 1)
-            weighted_sum = (hidden*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            output = self.pooler_custom(weighted_sum)
-
-        return output
-
-
 class BertTextEncoder(nn.Module):
     def __init__(self, args):
         super(BertTextEncoder, self).__init__()
         self.args = args
         
         self.bert = BertModel.from_pretrained(args.bert_model)
-        self.img_enc = ImageEncoder(args)
+        #self.img_enc = ImageEncoder(args)
 
     def forward(self, input_txt, attention_mask, segment, img):
         bsz = input_txt.size(0)
-        img = self.img_enc(img).squeeze(1)
+        #img = self.img_enc(img).squeeze(1)
         out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)
         
         return out[1]
@@ -744,34 +623,13 @@ class SimpleClassifier(nn.Module):
         return self.logit_fc(hidden_states)
 
 
-class MultimodalBertAdapterMClf(nn.Module):
+class MultimodalAdapterFullClf(nn.Module):
     def __init__(self, args):
-        super(MultimodalBertAdapterMClf, self).__init__()
+        super(MultimodalAdapterFullClf, self).__init__()
         self.args = args
         self.enc = BertTextEncoder(args)
         self.clf = SimpleClassifier(args.hidden_sz, args.hidden_sz, args.n_classes, 0.0)
 
     def forward(self, txt, mask, segment, img):
         x = self.enc(txt, mask, segment, img)
-        return self.clf(x)
-
-
-class MultimodalBertAdapterMTropesClf(nn.Module):
-    def __init__(self, args):
-        super(MultimodalBertAdapterMTropesClf, self).__init__()
-        self.args = args
-        self.enc = BertTextEncoder(args)
-        proj_dim = 512
-        self.gmu = GMU(args.hidden_sz, args.hidden_sz, proj_dim)
-        self.clf = SimpleClassifier(proj_dim, proj_dim, args.n_classes, 0.0)
-        
-        with open('centroids768.npy', 'rb') as f:
-            centroids_load = np.load(f)
-            
-        self.tropes_centroids = torch.from_numpy(centroids_load).t().cuda()
-
-    def forward(self, txt, mask, segment, img):
-        x = self.enc(txt, mask, segment, img)
-        dot_prod = torch.matmul(x, self.tropes_centroids.to(x.device))
-        x, z = self.gmu(x, dot_prod)
         return self.clf(x)
