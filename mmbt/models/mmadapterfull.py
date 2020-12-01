@@ -96,7 +96,8 @@ class BertConfig(object):
                  type_vocab_size=2,
                  initializer_range=0.02,
                  adapter_size=64,
-                 img_hidden_sz=4096):
+                 img_hidden_sz=4096,
+                 adapter_activation="gelu"):
         """Constructs BertConfig.
         Args:
             vocab_size_or_config_json_file: Vocabulary size of `inputs_ids` in `BertModel`.
@@ -139,6 +140,7 @@ class BertConfig(object):
             self.initializer_range = initializer_range
             self.adapter_size = adapter_size
             self.img_hidden_sz = img_hidden_sz
+            self.adapter_activation = adapter_activation
         else:
             raise ValueError("First argument must be either a vocabulary size (int)"
                              "or the path to a pretrained model config file (str)")
@@ -200,7 +202,7 @@ class PreTrainedBertModel(nn.Module):
             module.bias.data.zero_()
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name, state_dict=None, cache_dir=None, *inputs, **kwargs):
+    def from_pretrained(cls, pretrained_model_name, state_dict=None, cache_dir=None, adapter_args=None, *inputs, **kwargs):
         """
         Instantiate a PreTrainedBertModel from a pre-trained model file or a pytorch state dict.
         Download and cache the pre-trained model file if needed.
@@ -257,6 +259,10 @@ class PreTrainedBertModel(nn.Module):
         # Load config
         config_file = os.path.join(serialization_dir, CONFIG_NAME)
         config = BertConfig.from_json_file(config_file)
+        # Configure adapter attributes
+        config.img_hidden_sz = adapter_args['img_hidden_sz']
+        config.adapter_size = adapter_args['adapter_size']
+        config.adapter_activation = adapter_args['adapter_activation']
         logger.info("Model config {}".format(config))
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
@@ -349,7 +355,7 @@ class BertMultimodalAdapter(nn.Module):
     https://arxiv.org/pdf/1902.00751.pdf
     """
 
-    def __init__(self, hidden_size, m_hidden_size, adapter_size):
+    def __init__(self, hidden_size, m_hidden_size, adapter_size, adapter_activation):
         super(BertMultimodalAdapter, self).__init__()
         seq_list = []
         m_seq_list = [] # Complementary modality
@@ -358,14 +364,14 @@ class BertMultimodalAdapter(nn.Module):
         self.layer_norm_before = nn.LayerNorm(hidden_size)
         seq_list.append(self.layer_norm_before)
         seq_list.append(nn.Linear(hidden_size, adapter_size))
-        self.non_linearity = Activation_Function_Class("gelu")
+        self.non_linearity = Activation_Function_Class(adapter_activation)
         seq_list.append(self.non_linearity)
         
         # Complementary modality down projection
         self.m_layer_norm_before = nn.LayerNorm(m_hidden_size)
         m_seq_list.append(self.m_layer_norm_before)
         m_seq_list.append(nn.Linear(m_hidden_size, adapter_size))
-        self.m_non_linearity = Activation_Function_Class("gelu")
+        self.m_non_linearity = Activation_Function_Class(adapter_activation)
         m_seq_list.append(self.m_non_linearity)
         
         # Down projection
@@ -421,7 +427,10 @@ class BertSelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size, m_hidden_size=config.img_hidden_sz,adapter_size=config.adapter_size)
+        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size,
+                                             m_hidden_size=config.img_hidden_sz,
+                                             adapter_size=config.adapter_size,
+                                             adapter_activation=config.adapter_activation)
 
     def forward(self, hidden_states, input_tensor, mod=None):
         hidden_states = self.dense(hidden_states)
@@ -449,7 +458,10 @@ class BertOutput(nn.Module):
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size, m_hidden_size=config.img_hidden_sz, adapter_size=config.adapter_size)
+        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size,
+                                             m_hidden_size=config.img_hidden_sz,
+                                             adapter_size=config.adapter_size,
+                                             adapter_activation=config.adapter_activation)
 
     def forward(self, hidden_states, input_tensor, mod=None):
         hidden_states = self.dense(hidden_states)
@@ -467,10 +479,10 @@ class BertLayer(nn.Module):
         self.output = BertOutput(config)
 
     def forward(self, hidden_states, attention_mask, mod=None):
-        attention_output, mod = self.attention(hidden_states, attention_mask, mod)
+        attention_output, mod_ = self.attention(hidden_states, attention_mask, mod)
         intermediate_output = self.intermediate(attention_output)
-        layer_output, mod = self.output(intermediate_output, attention_output, mod)
-        return layer_output, mod
+        layer_output, _ = self.output(intermediate_output, attention_output, mod_)
+        return layer_output
 
 
 class BertEncoder(nn.Module):
@@ -482,7 +494,7 @@ class BertEncoder(nn.Module):
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, mod=None):
         all_encoder_layers = []
         for layer_module in self.layer:
-            hidden_states, mod = layer_module(hidden_states, attention_mask, mod)
+            hidden_states = layer_module(hidden_states, attention_mask, mod)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
         if not output_all_encoded_layers:
@@ -573,7 +585,7 @@ class BertTextEncoder(nn.Module):
         super(BertTextEncoder, self).__init__()
         self.args = args
         
-        self.bert = BertModel.from_pretrained(args.bert_model)
+        self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
         #self.img_enc = ImageEncoder(args)
 
     def forward(self, input_txt, attention_mask, segment, img):
