@@ -7,8 +7,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-from mmbt.models.mmbtadapter import MultimodalBertAdapterClf
-from mmbt.models.mmbtadapterm import MultimodalBertAdapterMClf, MultimodalBertAdapterMTropesClf
+from mmbt.models.adapter import MultimodalBertAdapterClf
+from mmbt.models.mmadapter import MultimodalBertAdapterMClf, MultimodalBertAdapterMTropesClf
 from mmbt.models.mmadapterfull import MultimodalAdapterFullClf
 
 
