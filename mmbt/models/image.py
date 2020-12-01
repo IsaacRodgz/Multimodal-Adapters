@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torchvision
 
+import copy
 from PIL import Image
 import detectron2
 from detectron2 import model_zoo
@@ -123,6 +124,27 @@ class ImageEncoder16(nn.Module):
         out = self.model.classifier[0](out)
         
         return out
+
+
+class FastVideoEncoder(nn.Module):
+    def __init__(self, args):
+        super(FastVideoEncoder, self).__init__()
+        self.args = args
+
+        layer = nn.Sequential(
+                    nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=2),
+                    nn.BatchNorm1d(args.img_hidden_sz),
+                    nn.ReLU(),
+                    #nn.MaxPool1d(kernel_size=2)
+                )
+        conv_layers = [copy.deepcopy(layer) for _ in range(3)]
+        #conv_layers.append(nn.AdaptiveAvgPool1d(1))
+        self.conv_layers = nn.ModuleList(conv_layers)
+
+    def forward(self, x):
+        for layer in self.conv_layers:
+            x = layer(x)       
+        return x
 
 
 class ImageClf(nn.Module):

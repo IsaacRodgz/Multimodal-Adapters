@@ -51,13 +51,14 @@ def get_args(parser):
     parser.add_argument("--hidden_sz", type=int, default=768)
     parser.add_argument("--img_embed_pool_type", type=str, default="avg", choices=["max", "avg"])
     parser.add_argument("--img_hidden_sz", type=int, default=2048)
+    parser.add_argument("--img_ngram_sz", type=int, default=2, help='Temporal convolution kernel size for weighting sequence of features (audio or video frames)')
     parser.add_argument("--include_bn", type=int, default=True)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lr_factor", type=float, default=0.5)
     parser.add_argument("--lr_patience", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--max_seq_len", type=int, default=512)
-    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter", "mmadapterfull"])
+    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter", "mmadapterfull", "mmadapterseq"])
     parser.add_argument("--n_workers", type=int, default=12)
     parser.add_argument("--name", type=str, default="nameless")
     parser.add_argument("--num_image_embeds", type=int, default=1)
@@ -78,6 +79,8 @@ def get_args(parser):
     
     '''Adapter BERT parameters'''
     parser.add_argument('--adapter_size', type=int, default=64, help='Dimension of Adapter (Num of units in bottleneck)')
+    parser.add_argument('--adapter_activation', type=str, default="gelu", help='Non linear activation function in bottleneck')
+    parser.add_argument('--modality_size', type=int, default=2048, help='Dimension of complementary modality in Adapter input')
 
 def get_criterion(args):
     if args.task_type == "multilabel":
@@ -191,6 +194,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
         txt, segment, mask, img, tgt, genres = batch
     elif args.task == "moviescope":
         txt, segment, mask, img, tgt, video, audio = batch
+        metadata = None # Reading of metadata not implemented yet
     else:
         txt, segment, mask, img, tgt, _ = batch
 
@@ -208,6 +212,42 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     elif args.model == "adapter":
         txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
         out = model(txt, mask, segment)
+    elif args.task == "moviescope" and args.model in ["mmadapter", "mmadapterfull", "mmadapterseq"]:
+        if None not in (img, video, audio, metadata):
+            img, video, audio, metadata = img.cuda(), video.cuda(), audio.cuda(), metadata.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img, video=video, audio=audio, metadata=metadata)
+        elif None not in (img, video, audio):
+            img, video, audio = img.cuda(), video.cuda(), audio.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img, video=video, audio=audio)
+        elif None not in (img, video):
+            img, video = img.cuda(), video.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img, video=video)
+        elif None not in (img, audio):
+            img, audio = img.cuda(), audio.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img, audio=audio)
+        elif None not in (video, audio):
+            video, audio = video.cuda(), audio.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, video=video, audio=audio)
+        elif img is not None:
+            img = img.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img)
+        elif video is not None:
+            video = video.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, video)
+        elif audio is not None:
+            audio = audio.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, audio=audio)
+    else:
+        raise ValueError("Not valid model or modality option")
+    '''
     elif args.model in ["mmadapter", "mmadapterfull"]:
         if args.task == "moviescope":
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -217,6 +257,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             img = img.cuda()
             out = model(txt, mask, segment, img)
+    '''
     
     tgt = tgt.to(device)
     loss = criterion(out, tgt)

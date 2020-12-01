@@ -10,12 +10,14 @@
 from mmbt.models.adapter import MultimodalBertAdapterClf
 from mmbt.models.mmadapter import MultimodalBertAdapterMClf, MultimodalBertAdapterMTropesClf
 from mmbt.models.mmadapterfull import MultimodalAdapterFullClf
+from mmbt.models.mmadapterseq import MultimodalAdapterSeqClf
 
 
 MODELS = {
     "adapter": MultimodalBertAdapterClf,
     "mmadapter": MultimodalBertAdapterMClf,
     "mmadapterfull": MultimodalAdapterFullClf,
+    "mmadapterseq": MultimodalAdapterSeqClf,
 }
 
 
