@@ -245,6 +245,8 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
             audio = audio.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment, audio=audio)
+        else:
+            raise ValueError("Not valid model or modality option")
     else:
         raise ValueError("Not valid model or modality option")
     '''

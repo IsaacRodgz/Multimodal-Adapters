@@ -73,7 +73,8 @@ class BertConfig(object):
                  max_position_embeddings=512,
                  type_vocab_size=2,
                  initializer_range=0.02,
-                 adapter_size=64):
+                 adapter_size=64,
+                 adapter_activation="gelu"):
         """Constructs BertConfig.
         Args:
             vocab_size_or_config_json_file: Vocabulary size of `inputs_ids` in `BertModel`.
@@ -115,6 +116,7 @@ class BertConfig(object):
             self.type_vocab_size = type_vocab_size
             self.initializer_range = initializer_range
             self.adapter_size = adapter_size
+            self.adapter_activation = adapter_activation
         else:
             raise ValueError("First argument must be either a vocabulary size (int)"
                              "or the path to a pretrained model config file (str)")
@@ -176,7 +178,7 @@ class PreTrainedBertModel(nn.Module):
             module.bias.data.zero_()
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name, state_dict=None, cache_dir=None, *inputs, **kwargs):
+    def from_pretrained(cls, pretrained_model_name, state_dict=None, cache_dir=None, adapter_args=None, *inputs, **kwargs):
         """
         Instantiate a PreTrainedBertModel from a pre-trained model file or a pytorch state dict.
         Download and cache the pre-trained model file if needed.
@@ -233,6 +235,9 @@ class PreTrainedBertModel(nn.Module):
         # Load config
         config_file = os.path.join(serialization_dir, CONFIG_NAME)
         config = BertConfig.from_json_file(config_file)
+        # Configure adapter attributes
+        config.adapter_size = adapter_args['adapter_size']
+        config.adapter_activation = adapter_args['adapter_activation']
         logger.info("Model config {}".format(config))
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
@@ -325,14 +330,14 @@ class BertAdapter(nn.Module):
     https://arxiv.org/pdf/1902.00751.pdf
     """
 
-    def __init__(self, hidden_size, adapter_size):
+    def __init__(self, hidden_size, adapter_size, adapter_activation):
         super(BertAdapter, self).__init__()
         seq_list = []
         
         self.layer_norm_before = nn.LayerNorm(hidden_size)
         seq_list.append(self.layer_norm_before)
         seq_list.append(nn.Linear(hidden_size, adapter_size))
-        self.non_linearity = Activation_Function_Class("gelu")
+        self.non_linearity = Activation_Function_Class(adapter_activation)
         seq_list.append(self.non_linearity)
         
         self.adapter_down = nn.Sequential(*seq_list)
@@ -370,7 +375,9 @@ class BertSelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertAdapter(hidden_size=config.hidden_size, adapter_size=config.adapter_size)
+        self.Adapter = BertAdapter(hidden_size=config.hidden_size,
+                                   adapter_size=config.adapter_size,
+                                   adapter_activation=config.adapter_activation)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -398,7 +405,9 @@ class BertOutput(nn.Module):
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertAdapter(hidden_size=config.hidden_size, adapter_size=config.adapter_size)
+        self.Adapter = BertAdapter(hidden_size=config.hidden_size,
+                                   adapter_size=config.adapter_size,
+                                   adapter_activation=config.adapter_activation)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -516,135 +525,12 @@ class BertModel(PreTrainedBertModel):
         return encoded_layers, pooled_output
 
 
-class ImageBertEmbeddings(nn.Module):
-    def __init__(self, args, embeddings):
-        super(ImageBertEmbeddings, self).__init__()
-        self.args = args
-        self.img_embeddings = nn.Linear(args.img_hidden_sz, args.hidden_sz)
-        self.position_embeddings = embeddings.position_embeddings
-        self.token_type_embeddings = embeddings.token_type_embeddings
-        self.word_embeddings = embeddings.word_embeddings
-        self.LayerNorm = embeddings.LayerNorm
-        self.dropout = nn.Dropout(p=args.dropout)
-
-    def forward(self, input_imgs, token_type_ids):
-        bsz = input_imgs.size(0)
-        seq_length = self.args.num_image_embeds + 2  # +2 for CLS and SEP Token
-
-        cls_id = torch.LongTensor([self.args.vocab.stoi["[CLS]"]]).cuda()
-        cls_id = cls_id.unsqueeze(0).expand(bsz, 1)
-        cls_token_embeds = self.word_embeddings(cls_id)
-
-        sep_id = torch.LongTensor([self.args.vocab.stoi["[SEP]"]]).cuda()
-        sep_id = sep_id.unsqueeze(0).expand(bsz, 1)
-        sep_token_embeds = self.word_embeddings(sep_id)
-
-        imgs_embeddings = self.img_embeddings(input_imgs)
-        token_embeddings = torch.cat(
-            [cls_token_embeds, imgs_embeddings, sep_token_embeds], dim=1
-        )
-
-        position_ids = torch.arange(seq_length, dtype=torch.long).cuda()
-        position_ids = position_ids.unsqueeze(0).expand(bsz, seq_length)
-        position_embeddings = self.position_embeddings(position_ids)
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = token_embeddings + position_embeddings + token_type_embeddings
-        embeddings = self.LayerNorm(embeddings)
-        embeddings = self.dropout(embeddings)
-        return embeddings
-
-
-class MultimodalBertEncoder(nn.Module):
-    def __init__(self, args):
-        super(MultimodalBertEncoder, self).__init__()
-        self.args = args
-
-        bert = BertModel.from_pretrained(args.bert_model)
-        self.txt_embeddings = bert.embeddings
-            
-        if self.args.pooling == 'cls_att':
-            pooling_dim = 2*args.hidden_sz
-        else:
-            pooling_dim = args.hidden_sz
-
-        self.img_embeddings = ImageBertEmbeddings(args, self.txt_embeddings)
-        self.img_encoder = ImageEncoder(args)
-        self.encoder = bert.encoder
-        self.pooler = bert.pooler
-        self.pooler_custom = nn.Sequential(
-          nn.Linear(pooling_dim, args.hidden_sz),
-          nn.Tanh(),
-        )
-        self.att_query = nn.Parameter(torch.rand(args.hidden_sz))
-        self.clf = nn.Linear(args.hidden_sz, args.n_classes)
-
-    def forward(self, input_txt, attention_mask, segment, input_img):
-        bsz = input_txt.size(0)
-        attention_mask = torch.cat(
-            [
-                torch.ones(bsz, self.args.num_image_embeds + 2).long().cuda(),
-                attention_mask,
-            ],
-            dim=1,
-        )
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = extended_attention_mask.to(
-            dtype=next(self.parameters()).dtype
-        )
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-
-        img_tok = (
-            torch.LongTensor(input_txt.size(0), self.args.num_image_embeds + 2)
-            .fill_(0)
-            .cuda()
-        )
-        img = self.img_encoder(input_img)  # BxNx3x224x224 -> BxNx2048
-        img_embed_out = self.img_embeddings(img, img_tok)
-        txt_embed_out = self.txt_embeddings(input_txt, segment)
-        encoder_input = torch.cat([img_embed_out, txt_embed_out], 1)  # Bx(TEXT+IMG)xHID
-        
-        # Output all encoded layers only for vertical attention on CLS token
-        encoded_layers = self.encoder(
-                encoder_input, extended_attention_mask, output_all_encoded_layers=(self.args.pooling == 'vert_att')
-            )
-        
-        if self.args.pooling == 'cls':
-            output = self.pooler(encoded_layers[-1])
-        
-        elif self.args.pooling == 'att':
-            hidden = encoded_layers[-1]  # Get all hidden vectors of last layer (B, L, hidden_sz)
-            dot = (hidden*self.att_query).sum(-1)  # Matrix of dot products (B, L)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, L, 1)
-            weighted_sum = (hidden*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            output = self.pooler_custom(weighted_sum)
-            
-        elif self.args.pooling == 'cls_att':
-            hidden = encoded_layers[-1]  # Get all hidden vectors of last layer (B, L, hidden_sz)
-            cls_token = hidden[:, 0]  # Extract vector of CLS token
-            word_tokens = hidden[:, 1:]
-            dot = (word_tokens*self.att_query).sum(-1)  # Matrix of dot products (B, L)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, L, 1)
-            weighted_sum = (word_tokens*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            pooler_cat = torch.cat([cls_token, weighted_sum], dim=1)
-            output = self.pooler_custom(pooler_cat)
-        
-        else:
-            hidden = [cls_hidden[:, 0] for cls_hidden in encoded_layers]  # Get all hidden vectors corresponding to CLS token (B, Num_bert_layers, hidden_sz)
-            hidden = torch.stack(hidden, dim=1)  # Convert to tensor (B, Num_bert_layers, hidden_sz)
-            dot = (hidden*self.att_query).sum(-1)  # Matrix of dot products (B, Num_bert_layers)
-            weights = F.softmax(dot, dim=1).unsqueeze(2)  # Normalize dot products and expand last dim (B, Num_bert_layers, 1)
-            weighted_sum = (hidden*weights).sum(dim=1)  # Weighted sum of hidden vectors (B, hidden_sz)
-            output = self.pooler_custom(weighted_sum)
-
-        return output
-
-
 class BertTextEncoder(nn.Module):
     def __init__(self, args):
         super(BertTextEncoder, self).__init__()
         self.args = args
         
-        self.bert = BertModel.from_pretrained(args.bert_model)
+        self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
         '''
         self.bert = HuggingBertModel.from_pretrained(args.bert_model)
         adapter_config = AdapterConfig.load(
