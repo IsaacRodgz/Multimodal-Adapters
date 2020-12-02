@@ -420,6 +420,56 @@ class BertMultimodalAdapter(nn.Module):
             module.bias.data.zero_()
 
 
+class BertMultimodalAttentionAdapter(nn.Module):
+    """
+    Multimodal adaptation based from "Parameter-Efficient Transfer Learning for NLP" paper:
+    https://arxiv.org/pdf/1902.00751.pdf
+    """
+
+    def __init__(self, hidden_size, m_hidden_size, adapter_size, adapter_activation):
+        super(BertMultimodalAttentionAdapter, self).__init__()
+        
+        # Query matrix used with BERT hidden vectors
+        self.query = nn.Linear(hidden_size, adapter_size)
+        self.query.apply(BertMultimodalAdapter.init_bert_weights)
+        
+        # Key matrix used with extra modality vectors
+        self.key = nn.Linear(m_hidden_size, adapter_size)
+        self.key.apply(BertMultimodalAdapter.init_bert_weights)
+        
+        # Value matrix used with extra modality vectors
+        self.value = nn.Linear(m_hidden_size, adapter_size, bias=False)
+        self.value.apply(BertMultimodalAdapter.init_bert_weights)
+        
+        self.dropout = nn.Dropout(0.1)
+        self.scaling = adapter_size ** -0.5
+        
+        # Up projection
+        self.adapter_up = nn.Linear(adapter_size, hidden_size)
+        
+        self.adapter_up.apply(self.init_bert_weights)
+
+    def forward(self, hidden_states, mod=None):
+        # Get projected queries, keys and values
+        query_layer = self.query(hidden_states)
+        query_layer *= self.scaling
+        key_layer = self.key(mod)
+        value_layer = self.value(mod)
+        
+        # Take the dot product between "query" and "key" to get the raw attention scores.
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-2, -1))
+        attention_scores = self.dropout(attention_scores)
+        
+        # Normalize the attention scores to probabilities.
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        
+        # Add values with attention scores
+        context_layer = torch.matmul(attention_probs, value_layer)
+
+        adapted_hidden_states = self.adapter_up(context_layer)
+        return adapted_hidden_states + hidden_states
+    
+
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super(BertSelfOutput, self).__init__()
@@ -585,13 +635,13 @@ class BertAdapterEncoder(nn.Module):
         self.args = args
         
         self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
-        self.video_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
+        #self.video_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
         #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
         #self.video_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
 
     def forward(self, input_txt, attention_mask, segment, img):
         bsz = input_txt.size(0)
-        img = self.video_project(torch.mean(img, dim=1))
+        #img = self.video_project(torch.mean(img, dim=1))
         #img = self.video_reduce(img.transpose(1,2))
         #img = self.video_project(torch.mean(img.transpose(1,2), dim=1))
         out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)

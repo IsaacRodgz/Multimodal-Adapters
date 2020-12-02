@@ -63,7 +63,7 @@ def get_args(parser):
     parser.add_argument("--name", type=str, default="nameless")
     parser.add_argument("--num_image_embeds", type=int, default=1)
     parser.add_argument("--num_images", type=int, default=8)
-    parser.add_argument("--visual", type=str, default="image", choices=["image", "video", "both"])
+    parser.add_argument("--visual", type=str, default="image", choices=["image", "video", "both", "none"])
     parser.add_argument("--audio", type=str, default="none", choices=["spectrogram", "none"])
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--savedir", type=str, default="/path/to/save_dir/")

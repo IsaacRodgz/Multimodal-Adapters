@@ -89,9 +89,9 @@ class JsonlDataset(Dataset):
             )
 
         image = None
+        video = None
         if self.args.visual != "none":
             if self.args.task == "moviescope":
-                video = None
                 if self.args.visual in ["video", "both"]:
                     file = open(os.path.join(self.data_dir, '200F_VGG16', f'{str(self.data[index]["id"])}.p'), 'rb')
                     data = pickle.load(file, encoding='bytes')
