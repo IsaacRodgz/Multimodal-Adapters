@@ -468,7 +468,57 @@ class BertMultimodalAttentionAdapter(nn.Module):
 
         adapted_hidden_states = self.adapter_up(context_layer)
         return adapted_hidden_states + hidden_states
-    
+
+
+class BertMultimodalMAGAdapter(nn.Module):
+    """
+    Multimodal adaptation based from "Parameter-Efficient Transfer Learning for NLP" paper:
+    https://arxiv.org/pdf/1902.00751.pdf
+    and MAG module
+    """
+
+    def __init__(self, hidden_size, m_hidden_size, adapter_size, adapter_activation):
+        super(BertMultimodalMAGAdapter, self).__init__()
+        self.dummy_param = nn.Parameter(torch.empty(0))
+        
+        self.W_hv = nn.Linear(m_hidden_size + hidden_size, hidden_size)
+        self.W_v = nn.Linear(m_hidden_size, hidden_size)
+        self.beta_shift = 1e-3
+
+        self.LayerNorm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(0.5)
+        
+    def forward(self, hidden_states, mod=None):
+        eps = 1e-6
+        device = self.dummy_param.device
+        seq_len = hidden_states.shape[1]
+        
+        adapted_m_hidden_states_rep = mod.unsqueeze(1).repeat(1,seq_len,1)
+        weight_v = F.relu(self.W_hv(torch.cat((adapted_m_hidden_states_rep, hidden_states), dim=-1)))
+
+        h_m = weight_v * self.W_v(adapted_m_hidden_states_rep)
+
+        em_norm = hidden_states.norm(2, dim=-1)
+        hm_norm = h_m.norm(2, dim=-1)
+
+        hm_norm_ones = torch.ones(hm_norm.shape, requires_grad=True).to(device)
+        hm_norm = torch.where(hm_norm == 0, hm_norm_ones, hm_norm)
+
+        thresh_hold = (em_norm / (hm_norm + eps)) * self.beta_shift
+
+        ones = torch.ones(thresh_hold.shape, requires_grad=True).to(device)
+
+        alpha = torch.min(thresh_hold, ones)
+        alpha = alpha.unsqueeze(dim=-1)
+
+        acoustic_vis_embedding = alpha * h_m
+
+        embedding_output = self.dropout(
+            self.LayerNorm(acoustic_vis_embedding + hidden_states)
+        )
+
+        return embedding_output
+
 
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
@@ -636,12 +686,14 @@ class BertAdapterEncoder(nn.Module):
         
         self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
         #self.video_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
+        
         #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
         #self.video_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
 
     def forward(self, input_txt, attention_mask, segment, img):
         bsz = input_txt.size(0)
         #img = self.video_project(torch.mean(img, dim=1))
+        
         #img = self.video_reduce(img.transpose(1,2))
         #img = self.video_project(torch.mean(img.transpose(1,2), dim=1))
         out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)
