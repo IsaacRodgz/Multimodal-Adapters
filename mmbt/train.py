@@ -301,7 +301,10 @@ def train(args):
         start_epoch = checkpoint["epoch"]
         n_no_improve = checkpoint["n_no_improve"]
         best_metric = checkpoint["best_metric"]
-        model.load_state_dict(checkpoint["state_dict"])
+        model_dict = model.state_dict()
+        model_dict.update(checkpoint["state_dict"]) 
+        model.load_state_dict(model_dict)
+        #model.load_state_dict(checkpoint["state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
 

@@ -27,6 +27,8 @@ def set_seed(seed):
 
 
 def save_checkpoint(state, is_best, checkpoint_path, filename="checkpoint.pt"):
+    filter_func = lambda x: "Adapter" in x
+    state['state_dict'] = {k: v for (k, v) in state['state_dict'].items() if filter_func(k)}
     filename = os.path.join(checkpoint_path, filename)
     torch.save(state, filename)
     if is_best:
@@ -35,7 +37,10 @@ def save_checkpoint(state, is_best, checkpoint_path, filename="checkpoint.pt"):
 
 def load_checkpoint(model, path):
     best_checkpoint = torch.load(path)
-    model.load_state_dict(best_checkpoint["state_dict"])
+    model_dict = model.state_dict()
+    model_dict.update(best_checkpoint["state_dict"]) 
+    model.load_state_dict(model_dict)
+    #model.load_state_dict(best_checkpoint["state_dict"])
 
 
 def truncate_seq_pair(tokens_a, tokens_b, max_length):
