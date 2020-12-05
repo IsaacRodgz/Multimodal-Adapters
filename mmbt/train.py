@@ -34,7 +34,7 @@ from mmbt.utils.utils import *
 from os.path import expanduser
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
+os.environ["CUDA_VISIBLE_DEVICES"]='0,1'
 
 def get_args(parser):
     parser.add_argument("--batch_sz", type=int, default=128)
@@ -110,10 +110,8 @@ def get_optimizer(model, args):
             name = x[0].lower()
             if 'adapter' in name:
                 zero_grad_mask.append(False)
-            elif 'classifier' in name:
-                zero_grad_mask.append(False)
-            elif 'cls' in name:
-                zero_grad_mask.append(False)
+            #elif 'clf' in name:
+            #    zero_grad_mask.append(False)
             else:
                 zero_grad_mask.append(True)
 
@@ -279,10 +277,6 @@ def train(args):
     train_loader, val_loader, test_loader = get_data_loaders(args)
 
     model = get_model(args)
-        
-    cuda_len = torch.cuda.device_count()
-    if cuda_len > 1:
-        model = nn.DataParallel(model)
 
     criterion = get_criterion(args)
     optimizer = get_optimizer(model, args)
@@ -290,6 +284,11 @@ def train(args):
     
     logger = create_logger("%s/logfile.log" % args.savedir, args)
     logger.info(model)
+    
+    cuda_len = torch.cuda.device_count()
+    if cuda_len > 1:
+        logger.info("Model in DataParallel..")
+        model = nn.DataParallel(model)
     model.cuda()
 
     torch.save(args, os.path.join(args.savedir, "args.pt"))
