@@ -14,6 +14,7 @@ from tqdm import tqdm
 import json
 from random import shuffle
 import numpy as np
+import copy
 
 import torch
 import torch.nn as nn
@@ -290,6 +291,8 @@ def train(args):
         logger.info("Model in DataParallel..")
         model = nn.DataParallel(model)
     model.cuda()
+    
+    #state_dict_pre = copy.deepcopy(model.state_dict())
 
     torch.save(args, os.path.join(args.savedir, "args.pt"))
 
@@ -366,6 +369,21 @@ def train(args):
     )
     log_metrics(f"Test - ", test_metrics, args, logger)
     
+    # Test that only adapter weights are being trained
+    '''
+    for ((k1, v1), (k2, v2)) in zip(state_dict_pre.items(), model.state_dict().items()):
+        if "adapter" in k1.lower():
+            if torch.equal(v1, v2):
+                print(f"Adapter weigths equal: {k1}")
+            else:
+                continue
+        else:
+            if torch.equal(v1, v2):
+                continue
+            else:
+                print(f"BERT weigths different: {k1}")
+    '''
+
 
 def test(args):
 
