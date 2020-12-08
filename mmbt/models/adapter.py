@@ -6,7 +6,6 @@ from pytorch_pretrained_bert.modeling import BertLayerNorm
 #from transformers import BertModel as HuggingBertModel
 
 from mmbt.models.adapter_modeling import BertModel, Activation_Function_Class
-from mmbt.models.image import ImageEncoder
 
 
 class SimpleClassifier(nn.Module):

@@ -1,28 +1,6 @@
-#!/usr/bin/env python3
-#
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import BertModel as HuggingBertModel
-from pytorch_pretrained_bert.modeling import BertEmbeddings, BertSelfAttention, BertLayerNorm, BertIntermediate, BertPooler
-#from pytorch_pretrained_bert.modeling import WEIGHTS_NAME
-from collections import OrderedDict
-from mmbt.models.image import ImageEncoder, ImageEncoder16, FastVideoEncoder
-
-from transformers import (
-    AdapterConfig,
-    AdapterType,
-    AutoConfig,
-)
-
-from pytorch_pretrained_bert.file_utils import cached_path
 import os
 import copy
 import json
@@ -32,6 +10,9 @@ import tarfile
 import tempfile
 import shutil
 import numpy as np
+
+from pytorch_pretrained_bert.modeling import BertEmbeddings, BertSelfAttention, BertLayerNorm, BertIntermediate, BertPooler
+from pytorch_pretrained_bert.file_utils import cached_path
 
 logger = logging.getLogger(__name__)
 PRETRAINED_MODEL_ARCHIVE_MAP = {
@@ -47,37 +28,6 @@ CONFIG_NAME = 'bert_config.json'
 WEIGHTS_NAME = 'pytorch_model.bin'
 
 from mmbt.models.image import ImageEncoder
-
-
-def truncated_normal_(tensor, mean=0, std=1):
-    size = tensor.shape
-    tmp = tensor.new_empty(size + (4,)).normal_()
-    valid = (tmp < 2) & (tmp > -2)
-    ind = valid.max(-1, keepdim=True)[1]
-    tensor.data.copy_(tmp.gather(-1, ind).squeeze(-1))
-    tensor.data.mul_(std).add_(mean)
-    return tensor
-
-
-class GMU(nn.Module):
-    """ Layer inspired by 'Gated multimodal networks, Arevalo1 et al.' (https://arxiv.org/abs/1702.01992) """
-    def __init__(self, size_in1, size_in2, size_out):
-        super(GMU, self).__init__()
-        self.size_in1, self.size_in2, self.size_out = size_in1, size_in2, size_out
-        
-        self.hidden1 = nn.Linear(size_in1, size_out, bias=False)
-        self.hidden2 = nn.Linear(size_in2, size_out, bias=False)
-        self.x1_gate = nn.Linear(size_in1+size_in2, size_out, bias=False)
-        self.x2_gate = nn.Linear(size_in1+size_in2, size_out, bias=False)
-
-    def forward(self, x1, x2):
-        h1 = F.tanh(self.hidden1(x1))
-        h2 = F.tanh(self.hidden2(x2))
-        x_cat = torch.cat((x1, x2), dim=1)
-        z1 = F.sigmoid(self.x1_gate(x_cat))
-        z2 = F.sigmoid(self.x2_gate(x_cat))
-
-        return z1*h1 + z2*h2, torch.cat((z1, z2), dim=1)
 
 
 class BertConfig(object):
@@ -517,7 +467,7 @@ class BertMultimodalMAGAdapter(nn.Module):
             self.LayerNorm(acoustic_vis_embedding + hidden_states)
         )
 
-        return embedding_output
+        return embedding_output    
 
 
 class BertSelfOutput(nn.Module):
@@ -677,55 +627,3 @@ class BertModel(PreTrainedBertModel):
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
         return encoded_layers, pooled_output
-
-
-class BertAdapterEncoder(nn.Module):
-    def __init__(self, args):
-        super(BertAdapterEncoder, self).__init__()
-        self.args = args
-        
-        self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
-        self.modality_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)        
-        #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
-
-    def forward(self, input_txt, attention_mask, segment, img):
-        bsz = input_txt.size(0)
-        
-        if self.args.adapter_modality_type == "video":
-            img = self.modality_project(torch.mean(img, dim=1))
-        else:
-            img = self.modality_project(img)
-        
-        #img = self.video_reduce(img.transpose(1,2))
-        #img = self.modality_project(torch.mean(img.transpose(1,2), dim=1))
-        
-        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)
-        
-        return out[1]
-
-
-class SimpleClassifier(nn.Module):
-    def __init__(self, in_dim, hid_dim, out_dim, dropout):
-        super().__init__()
-        self.logit_fc = nn.Sequential(
-            nn.Linear(in_dim, hid_dim),
-            nn.Dropout(dropout),
-            Activation_Function_Class("gelu"),
-            BertLayerNorm(hid_dim, eps=1e-12),
-            nn.Linear(hid_dim, out_dim),
-        )
-
-    def forward(self, hidden_states):
-        return self.logit_fc(hidden_states)
-
-
-class MultimodalAdapterSeqClf(nn.Module):
-    def __init__(self, args):
-        super(MultimodalAdapterSeqClf, self).__init__()
-        self.args = args
-        self.enc = BertAdapterEncoder(args)
-        self.clf = SimpleClassifier(args.hidden_sz, args.hidden_sz, args.n_classes, 0.0)
-
-    def forward(self, txt, mask, segment, img):
-        x = self.enc(txt, mask, segment, img)
-        return self.clf(x)

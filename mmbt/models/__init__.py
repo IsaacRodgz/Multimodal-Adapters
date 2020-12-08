@@ -8,16 +8,16 @@
 #
 
 from mmbt.models.adapter import BertAdapterClf
-from mmbt.models.mmadapter import MultimodalBertAdapterMClf, MultimodalBertAdapterMTropesClf
-from mmbt.models.mmadapterfull import MultimodalAdapterFullClf
-from mmbt.models.mmadapterseq import MultimodalAdapterSeqClf
+from mmbt.models.mmadapter import MultimodalAdapterClf
+#from mmbt.models.mmadapter import MultimodalBertAdapterMClf, MultimodalBertAdapterMTropesClf
+#from mmbt.models.mmadapterfull import MultimodalAdapterFullClf
 
 
 MODELS = {
     "adapter": BertAdapterClf,
-    "mmadapter": MultimodalBertAdapterMClf,
-    "mmadapterfull": MultimodalAdapterFullClf,
-    "mmadapterseq": MultimodalAdapterSeqClf,
+    "mmadapter": MultimodalAdapterClf,
+    #"mmadapterfull": MultimodalAdapterFullClf,
+    #"mmadapter": MultimodalBertAdapterMClf,
 }
 
 
