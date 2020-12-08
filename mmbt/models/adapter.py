@@ -24,9 +24,9 @@ class SimpleClassifier(nn.Module):
         return self.logit_fc(hidden_states)
 
 
-class MultimodalBertAdapterClf(nn.Module):
+class BertAdapterClf(nn.Module):
     def __init__(self, args):
-        super(MultimodalBertAdapterClf, self).__init__()
+        super(BertAdapterClf, self).__init__()
         self.args = args
         
         self.enc = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
