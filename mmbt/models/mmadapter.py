@@ -5,7 +5,8 @@ import math
 from pytorch_pretrained_bert.modeling import BertLayerNorm
 #from transformers import BertModel as HuggingBertModel
 
-from mmbt.models.mmadapter_modeling_methods import BertModel, Activation_Function_Class
+from mmbt.models.modeling_bert import BertModel
+from mmbt.models.mmadapter_modeling import Activation_Function_Class
 
 
 class GMU(nn.Module):
@@ -35,7 +36,9 @@ class BertMultimodalAdapterEncoder(nn.Module):
         self.args = args
         
         self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
-        import pdb;pdb.set_trace()
+        self.bert.add_adapter("image")
+        self.bert.train_adapter(["image"])
+        
         self.modality_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
         
         #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
@@ -49,7 +52,7 @@ class BertMultimodalAdapterEncoder(nn.Module):
         #img = self.video_reduce(img.transpose(1,2))
         #img = self.modality_project(torch.mean(img.transpose(1,2), dim=1))
         
-        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)
+        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img, adapter_names=["image"])
         
         return out[1]
 

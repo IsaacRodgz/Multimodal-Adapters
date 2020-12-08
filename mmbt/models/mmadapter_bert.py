@@ -1,6 +1,8 @@
 import torch
 from torch import nn
-from mmbt.models.adapter_model_mixin import ModelAdaptersMixin
+import torch.nn.functional as F
+import math
+from mmbt.models.mmadapter_model_mixin import ModelAdaptersMixin
 from mmbt.models.mmadapter_modeling import BertMultimodalAdapter
 
 
@@ -79,7 +81,7 @@ class BertSelfOutputAdaptersMixin:
         
         adapter_layer = self.get_adapter_layer(adapter_stack)
         if adapter_layer is not None:
-            hidden_states, _, _ = adapter_layer(hidden_states, mod)
+            hidden_states = adapter_layer(hidden_states, mod)
 
         return hidden_states
 
@@ -169,7 +171,7 @@ class BertOutputAdaptersMixin:
         
         adapter_layer = self.get_adapter_layer(adapter_stack)
         if adapter_layer is not None:
-            hidden_states, _, _ = adapter_layer(hidden_states, mod)
+            hidden_states = adapter_layer(hidden_states, mod)
 
         return hidden_states
 
