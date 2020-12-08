@@ -119,11 +119,7 @@ def collate_fn(batch, args):
         tokens, segment = input_row[:2]
         text_tensor[i_batch, :length] = tokens
         segment_tensor[i_batch, :length] = segment
-        if args.model == "mmbt3":
-            mask_tensor[i_batch, :length+1] = 1
-            mm_mask_tensor[i_batch, :length+args.num_image_embeds] = 1
-        else:
-            mask_tensor[i_batch, :length] = 1
+        mask_tensor[i_batch, :length] = 1
 
     if args.task == "moviescope":
         return text_tensor, segment_tensor, mask_tensor, img_tensor, tgt_tensor, video_tensor, audio_tensor

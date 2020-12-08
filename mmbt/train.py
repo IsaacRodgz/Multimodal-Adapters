@@ -82,6 +82,7 @@ def get_args(parser):
     parser.add_argument('--adapter_size', type=int, default=64, help='Dimension of Adapter (Num of units in bottleneck)')
     parser.add_argument('--adapter_activation', type=str, default="gelu", help='Non linear activation function in bottleneck')
     parser.add_argument('--modality_size', type=int, default=2048, help='Dimension of complementary modality in Adapter input')
+    parser.add_argument("--adapter_modality_type", type=str, default="image", choices=["image", "video", "audio", "none"])
 
 def get_criterion(args):
     if args.task_type == "multilabel":
@@ -103,7 +104,7 @@ def get_criterion(args):
 
 
 def get_optimizer(model, args):
-    if args.model in ["adapter", "mmadapter", "mmadapterfull"]:
+    if args.model in ["adapter", "mmadapter", "mmadapterseq", "mmadapterfull"]:
         param_optimizer = np.array(list(model.named_parameters()))
         zero_grad_mask = []
     
