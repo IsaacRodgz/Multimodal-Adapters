@@ -39,6 +39,51 @@ class Activation_Function_Class(nn.Module):
     def forward(self, x):
         return self.f(x)
 
+    
+class BertAdapter(nn.Module):
+    """
+    This module implements the "Parameter-Efficient Transfer Learning for NLP" paper:
+    https://arxiv.org/pdf/1902.00751.pdf
+    """
+
+    def __init__(self, hidden_size, adapter_size, adapter_activation):
+        super(BertAdapter, self).__init__()
+        seq_list = []
+        
+        self.layer_norm_before = nn.LayerNorm(hidden_size)
+        seq_list.append(self.layer_norm_before)
+        seq_list.append(nn.Linear(hidden_size, adapter_size))
+        self.non_linearity = Activation_Function_Class(adapter_activation)
+        seq_list.append(self.non_linearity)
+        
+        self.adapter_down = nn.Sequential(*seq_list)
+        self.adapter_up = nn.Linear(adapter_size, hidden_size)
+        
+        self.adapter_down.apply(self.init_bert_weights)
+        self.adapter_up.apply(self.init_bert_weights)
+
+    def forward(self, hidden_states, mod=None):
+        #adapted_hidden_states = self.layer_norm_before(hidden_states)
+        adapted_hidden_states = self.adapter_down(hidden_states)
+        #adapted_hidden_states = gelu(x=adapted_hidden_states)
+        adapted_hidden_states = self.adapter_up(adapted_hidden_states)
+        return adapted_hidden_states + hidden_states
+    
+    @staticmethod
+    def init_bert_weights(module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            # module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            # TODO I set the std to default 0.02, this might need to be changed
+            module.weight.data.normal_(mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
 
 class BertMultimodalAdapter(nn.Module):
     """

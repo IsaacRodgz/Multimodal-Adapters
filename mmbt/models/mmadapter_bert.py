@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 from mmbt.models.mmadapter_model_mixin import ModelAdaptersMixin
-from mmbt.models.mmadapter_modeling import BertMultimodalAdapter
+from mmbt.models.mmadapter_modeling import BertAdapter, BertMultimodalAdapter
 
 
 class BertSelfOutputAdaptersMixin:

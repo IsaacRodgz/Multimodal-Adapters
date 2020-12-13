@@ -64,7 +64,7 @@ def get_args(parser):
     parser.add_argument("--name", type=str, default="nameless")
     parser.add_argument("--num_image_embeds", type=int, default=1)
     parser.add_argument("--num_images", type=int, default=8)
-    parser.add_argument("--visual", type=str, default="image", choices=["image", "video", "both", "none"])
+    parser.add_argument("--visual", type=str, default="none", choices=["image", "video", "both", "none"])
     parser.add_argument("--audio", type=str, default="none", choices=["spectrogram", "none"])
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--savedir", type=str, default="/path/to/save_dir/")
@@ -82,7 +82,7 @@ def get_args(parser):
     parser.add_argument('--adapter_size', type=int, default=64, help='Dimension of Adapter (Num of units in bottleneck)')
     parser.add_argument('--adapter_activation', type=str, default="gelu", help='Non linear activation function in bottleneck')
     parser.add_argument('--modality_size', type=int, default=2048, help='Dimension of complementary modality in Adapter input')
-    parser.add_argument("--adapter_modality_type", type=str, default="image", choices=["image", "video", "audio", "none"])
+    parser.add_argument("--adapter_modality_type", type=str, default="none", choices=["image", "video", "audio", "none"])
 
 def get_criterion(args):
     if args.task_type == "multilabel":
@@ -105,6 +105,7 @@ def get_criterion(args):
 
 def get_optimizer(model, args):
     if args.model in ["adapter", "mmadapter", "mmadapterseq", "mmadapterfull"]:
+        #'''
         param_optimizer = np.array(list(model.named_parameters()))
         zero_grad_mask = []
     
@@ -125,6 +126,7 @@ def get_optimizer(model, args):
             {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
             {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
+        #'''
 
         optimizer = optim.AdamW(optimizer_grouped_parameters, lr=args.lr)
     else:
@@ -209,10 +211,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     elif args.model == "bert":
         txt, mask, segment = txt.to(device), mask.to(device), segment.to(device)
         out = model(txt, mask, segment)
-    elif args.model == "adapter":
-        txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
-        out = model(txt, mask, segment)
-    elif args.task == "moviescope" and args.model in ["mmadapter", "mmadapterfull", "mmadapterseq"]:
+    elif args.task == "moviescope" and args.model in ["adapter", "mmadapter", "mmadapterfull", "mmadapterseq"]:
         if None not in (img, video, audio, metadata):
             img, video, audio, metadata = img.cuda(), video.cuda(), audio.cuda(), metadata.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -246,7 +245,8 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment, audio=audio)
         else:
-            raise ValueError("Not valid model or modality option")
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment)
     else:
         raise ValueError("Not valid model or modality option")
     '''
@@ -293,7 +293,7 @@ def train(args):
         model = nn.DataParallel(model)
     model.cuda()
     
-    #state_dict_pre = copy.deepcopy(model.state_dict())
+    state_dict_pre = copy.deepcopy(model.state_dict())
 
     torch.save(args, os.path.join(args.savedir, "args.pt"))
 
@@ -371,7 +371,7 @@ def train(args):
     log_metrics(f"Test - ", test_metrics, args, logger)
     
     # Test that only adapter weights are being trained
-    '''
+    #'''
     for ((k1, v1), (k2, v2)) in zip(state_dict_pre.items(), model.state_dict().items()):
         if "adapter" in k1.lower():
             if torch.equal(v1, v2):
@@ -383,7 +383,7 @@ def train(args):
                 continue
             else:
                 print(f"BERT weigths different: {k1}")
-    '''
+    #'''
 
 
 def test(args):

@@ -9,27 +9,6 @@ from mmbt.models.modeling_bert import BertModel
 from mmbt.models.mmadapter_modeling import Activation_Function_Class
 
 
-class GMU(nn.Module):
-    """ Layer inspired by 'Gated multimodal networks, Arevalo1 et al.' (https://arxiv.org/abs/1702.01992) """
-    def __init__(self, size_in1, size_in2, size_out):
-        super(GMU, self).__init__()
-        self.size_in1, self.size_in2, self.size_out = size_in1, size_in2, size_out
-        
-        self.hidden1 = nn.Linear(size_in1, size_out, bias=False)
-        self.hidden2 = nn.Linear(size_in2, size_out, bias=False)
-        self.x1_gate = nn.Linear(size_in1+size_in2, size_out, bias=False)
-        self.x2_gate = nn.Linear(size_in1+size_in2, size_out, bias=False)
-
-    def forward(self, x1, x2):
-        h1 = F.tanh(self.hidden1(x1))
-        h2 = F.tanh(self.hidden2(x2))
-        x_cat = torch.cat((x1, x2), dim=1)
-        z1 = F.sigmoid(self.x1_gate(x_cat))
-        z2 = F.sigmoid(self.x2_gate(x_cat))
-
-        return z1*h1 + z2*h2, torch.cat((z1, z2), dim=1)
-
-
 class BertMultimodalAdapterEncoder(nn.Module):
     def __init__(self, args):
         super(BertMultimodalAdapterEncoder, self).__init__()
@@ -43,10 +22,10 @@ class BertMultimodalAdapterEncoder(nn.Module):
         
         #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
 
-    def forward(self, input_txt, attention_mask, segment, img):        
+    def forward(self, input_txt, attention_mask, segment, img=None):        
         if self.args.adapter_modality_type == "video":
             img = self.modality_project(torch.mean(img, dim=1))
-        else:
+        elif self.args.adapter_modality_type == "image":
             img = self.modality_project(img)
         
         #img = self.video_reduce(img.transpose(1,2))
@@ -79,6 +58,6 @@ class MultimodalAdapterClf(nn.Module):
         self.enc = BertMultimodalAdapterEncoder(args)
         self.clf = SimpleClassifier(args.hidden_sz, args.hidden_sz, args.n_classes, 0.0)
 
-    def forward(self, txt, mask, segment, img):
+    def forward(self, txt, mask, segment, img=None):
         x = self.enc(txt, mask, segment, img)
         return self.clf(x)
