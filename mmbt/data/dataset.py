@@ -37,6 +37,15 @@ class JsonlDataset(Dataset):
         self.max_seq_len = args.max_seq_len
         if args.model in ["mmbt", "mmbtp", "mmdbt", "mmbt3"]:
             self.max_seq_len -= args.num_image_embeds
+            
+        if self.args.meta:
+            split = data_path.split('/')[-1].split('.')[0]
+            split = split if split != 'dev' else 'val'
+            metadata_dir = os.path.join(self.data_dir, 'Metadata_matrices', f'{split}_metadata.npy')
+            self.metadata_matrix = np.load(metadata_dir)
+            metadata_dir = os.path.join(self.data_dir, 'Metadata_matrices', f'{split}_ids.pickle')
+            with open(metadata_dir, 'rb') as handle:
+                self.metadata_dict = pickle.load(handle)
 
         self.transforms = transforms_
         self.vilbert_transforms = transforms.Compose(
@@ -121,6 +130,13 @@ class JsonlDataset(Dataset):
             data = torch.from_numpy(data).type(torch.FloatTensor).squeeze(0)
             audio = torch.cat([frame for frame in data[:4]], dim=1)
             
+        metadata = None
+        if self.args.meta:
+            example_id = self.data[index]["id"]
+            metadata_idx = self.metadata_dict[example_id]
+            metadata = self.metadata_matrix[metadata_idx]
+            metadata = torch.from_numpy(metadata).type(torch.FloatTensor)
+            
         if self.args.task == "mpaa":
             genres = torch.zeros(len(self.args.genres))
             genres[[self.args.genres.index(tgt) for tgt in self.data[index]["genre"]]] = 1
@@ -128,6 +144,6 @@ class JsonlDataset(Dataset):
         if self.args.task == "mpaa":
             return sentence, segment, image, label, genres
         elif self.args.task == "moviescope":
-            return sentence, segment, image, label, video, audio
+            return sentence, segment, image, label, video, audio, metadata
         else:
             return sentence, segment, image, label

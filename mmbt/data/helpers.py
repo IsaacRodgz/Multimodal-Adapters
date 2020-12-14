@@ -91,7 +91,7 @@ def collate_fn(batch, args):
     segment_tensor = torch.zeros(bsz, max_seq_len).long()
 
     video_tensor = None
-    if args.visual in ["video", "both"]:
+    if args.visual in ["video", "both"] and args.task == "moviescope":
         video_tensor = torch.stack([row[4] for row in batch])
         
     genres = None
@@ -103,10 +103,14 @@ def collate_fn(batch, args):
         img_tensor = torch.stack([row[2] for row in batch])
         
     audio_tensor = None
-    if args.audio == "spectrogram":
+    if args.audio == "spectrogram" and args.task == "moviescope":
         audio_lens = [row[5].shape[1] for row in batch]
         audio_min_len = min(audio_lens)
         audio_tensor = torch.stack([row[5][..., :audio_min_len] for row in batch])
+        
+    metadata_tensor = None
+    if args.meta and args.task == "moviescope":
+        metadata_tensor = torch.stack([row[6] for row in batch])
 
     if args.task_type == "multilabel":
         # Multilabel case
@@ -122,7 +126,7 @@ def collate_fn(batch, args):
         mask_tensor[i_batch, :length] = 1
 
     if args.task == "moviescope":
-        return text_tensor, segment_tensor, mask_tensor, img_tensor, tgt_tensor, video_tensor, audio_tensor
+        return text_tensor, segment_tensor, mask_tensor, img_tensor, tgt_tensor, video_tensor, audio_tensor, metadata_tensor
     else:
         return text_tensor, segment_tensor, mask_tensor, img_tensor, tgt_tensor, genres
 

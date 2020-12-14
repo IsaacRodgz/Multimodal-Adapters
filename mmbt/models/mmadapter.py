@@ -9,6 +9,23 @@ from mmbt.models.modeling_bert import BertModel
 from mmbt.models.mmadapter_modeling import Activation_Function_Class
 
 
+class AudioEncoder(nn.Module):
+    def __init__(self, args):
+        super(AudioEncoder, self).__init__()
+        self.args = args
+        
+        conv_layers = []
+        conv_layers.append(nn.Conv1d(96, 96, 128, stride=2))
+        conv_layers.append(nn.Conv1d(96, 96, 128, stride=2))
+        conv_layers.append(nn.AdaptiveAvgPool1d(200))
+        self.conv_layers = nn.ModuleList(conv_layers)
+
+    def forward(self, x):
+        for layer in self.conv_layers:
+            x = layer(x)
+        return x
+
+
 class BertMultimodalAdapterEncoder(nn.Module):
     def __init__(self, args):
         super(BertMultimodalAdapterEncoder, self).__init__()
@@ -19,19 +36,25 @@ class BertMultimodalAdapterEncoder(nn.Module):
         self.bert.train_adapter(["image"])
         
         self.modality_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
-        
         #self.video_reduce = nn.Conv1d(args.img_hidden_sz, args.img_hidden_sz, args.img_ngram_sz, stride=args.img_ngram_sz)
+        
+        if self.args.adapter_modality_type == "audio":
+            self.audio_enc = AudioEncoder(args)
 
-    def forward(self, input_txt, attention_mask, segment, img=None):        
+    def forward(self, input_txt, attention_mask, segment, mod=None):        
         if self.args.adapter_modality_type == "video":
-            img = self.modality_project(torch.mean(img, dim=1))
-        elif self.args.adapter_modality_type == "image":
-            img = self.modality_project(img)
+            mod = self.modality_project(torch.mean(mod, dim=1))
+        elif self.args.adapter_modality_type == "image" or self.args.meta:
+            mod = self.modality_project(mod)
+        elif self.args.adapter_modality_type == "audio":
+            mod = self.audio_enc(mod)
+            import pdb; pdb.set_trace()
+            mod = self.modality_project(torch.mean(mod, dim=1))
         
-        #img = self.video_reduce(img.transpose(1,2))
-        #img = self.modality_project(torch.mean(img.transpose(1,2), dim=1))
+        #mod = self.video_reduce(mod.transpose(1,2))
+        #mod = self.modality_project(torch.mean(mod.transpose(1,2), dim=1))
         
-        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img, adapter_names=["image"])
+        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=mod, adapter_names=["image"])
         
         return out[1]
 

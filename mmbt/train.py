@@ -66,6 +66,7 @@ def get_args(parser):
     parser.add_argument("--num_images", type=int, default=8)
     parser.add_argument("--visual", type=str, default="none", choices=["image", "video", "both", "none"])
     parser.add_argument("--audio", type=str, default="none", choices=["spectrogram", "none"])
+    parser.add_argument("--meta", action='store_true', help='Include metadata information (default: false)')
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--savedir", type=str, default="/path/to/save_dir/")
     parser.add_argument("--seed", type=int, default=123)
@@ -195,8 +196,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     if args.task == "mpaa":
         txt, segment, mask, img, tgt, genres = batch
     elif args.task == "moviescope":
-        txt, segment, mask, img, tgt, video, audio = batch
-        metadata = None # Reading of metadata not implemented yet
+        txt, segment, mask, img, tgt, video, audio, metadata = batch
     else:
         txt, segment, mask, img, tgt, _ = batch
 
@@ -244,6 +244,10 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
             audio = audio.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment, audio=audio)
+        elif metadata is not None:
+            metadata = metadata.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, metadata)
         else:
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment)
