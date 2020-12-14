@@ -235,7 +235,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
         elif img is not None:
             img = img.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
-            out = model(txt, mask, segment, img=img)
+            out = model(txt, mask, segment, img)
         elif video is not None:
             video = video.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -243,7 +243,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
         elif audio is not None:
             audio = audio.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
-            out = model(txt, mask, segment, audio=audio)
+            out = model(txt, mask, segment, audio)
         elif metadata is not None:
             metadata = metadata.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()

@@ -15,8 +15,8 @@ class AudioEncoder(nn.Module):
         self.args = args
         
         conv_layers = []
-        conv_layers.append(nn.Conv1d(96, 96, 128, stride=2))
-        conv_layers.append(nn.Conv1d(96, 96, 128, stride=2))
+        conv_layers.append(nn.Conv1d(128, 128, 128, stride=2))
+        conv_layers.append(nn.Conv1d(128, 128, 128, stride=2))
         conv_layers.append(nn.AdaptiveAvgPool1d(200))
         self.conv_layers = nn.ModuleList(conv_layers)
 
@@ -48,8 +48,7 @@ class BertMultimodalAdapterEncoder(nn.Module):
             mod = self.modality_project(mod)
         elif self.args.adapter_modality_type == "audio":
             mod = self.audio_enc(mod)
-            import pdb; pdb.set_trace()
-            mod = self.modality_project(torch.mean(mod, dim=1))
+            mod = self.modality_project(torch.mean(mod, dim=2))
         
         #mod = self.video_reduce(mod.transpose(1,2))
         #mod = self.modality_project(torch.mean(mod.transpose(1,2), dim=1))
