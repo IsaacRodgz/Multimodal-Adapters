@@ -282,7 +282,7 @@ class BertSelfOutput(BertSelfOutputAdaptersMixin, nn.Module):
     def forward(self, hidden_states, input_tensor, mod=None, adapter_names=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.adapters_forward(hidden_states, mod, adapter_names=adapter_names)
+        hidden_states = self.adapters_forward(hidden_states, input_tensor, mod, adapter_names=adapter_names)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
@@ -310,7 +310,7 @@ class BertOutput(BertOutputAdaptersMixin, nn.Module):
     def forward(self, hidden_states, input_tensor, mod=None, adapter_names=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.adapters_forward(hidden_states, mod, adapter_names=adapter_names)
+        hidden_states = self.adapters_forward(hidden_states, input_tensor, mod, adapter_names=adapter_names)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
