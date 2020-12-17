@@ -54,6 +54,7 @@ class BertConfig(object):
                  type_vocab_size=2,
                  initializer_range=0.02,
                  adapter_size=64,
+                 adapter_vid_size=64,
                  modality_size=4096,
                  adapter_activation="gelu"):
         """Constructs BertConfig.
@@ -97,6 +98,7 @@ class BertConfig(object):
             self.type_vocab_size = type_vocab_size
             self.initializer_range = initializer_range
             self.adapter_size = adapter_size
+            self.adapter_vid_size = adapter_vid_size
             self.modality_size = modality_size
             self.adapter_activation = adapter_activation
         else:
@@ -220,6 +222,7 @@ class PreTrainedBertModel(nn.Module):
         # Configure adapter attributes
         config.modality_size = adapter_args['modality_size']
         config.adapter_size = adapter_args['adapter_size']
+        config.adapter_vid_size = adapter_args['adapter_vid_size']
         config.adapter_activation = adapter_args['adapter_activation']
         logger.info("Model config {}".format(config))
         # Instantiate model.

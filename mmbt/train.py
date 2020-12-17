@@ -59,7 +59,7 @@ def get_args(parser):
     parser.add_argument("--lr_patience", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--max_seq_len", type=int, default=512)
-    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter", "mmadapterfull", "mmadapterseq"])
+    parser.add_argument("--model", type=str, default="bow", choices=["adapter", "mmadapter", "mmadapterfus", "mmadapterfull", "mmadapterseq"])
     parser.add_argument("--n_workers", type=int, default=12)
     parser.add_argument("--name", type=str, default="nameless")
     parser.add_argument("--num_image_embeds", type=int, default=1)
@@ -81,8 +81,9 @@ def get_args(parser):
     
     '''Adapter BERT parameters'''
     parser.add_argument('--adapter_size', type=int, default=64, help='Dimension of Adapter (Num of units in bottleneck)')
+    parser.add_argument('--adapter_vid_size', type=int, default=64, help='Dimension of Adapter (Num of units in bottleneck)')
     parser.add_argument('--adapter_activation', type=str, default="gelu", help='Non linear activation function in bottleneck')
-    parser.add_argument('--modality_size', type=int, default=2048, help='Dimension of complementary modality in Adapter input')
+    parser.add_argument('--modality_size', type=int, default=4096, help='Dimension of complementary modality in Adapter input')
     parser.add_argument("--adapter_modality_type", type=str, default="none", choices=["image", "video", "audio", "none"])
 
 def get_criterion(args):
@@ -105,14 +106,14 @@ def get_criterion(args):
 
 
 def get_optimizer(model, args):
-    if args.model in ["adapter", "mmadapter", "mmadapterseq", "mmadapterfull"]:
+    if args.model in ["adapter", "mmadapter", "mmadapterfus", "mmadapterseq", "mmadapterfull"]:
         #'''
         param_optimizer = np.array(list(model.named_parameters()))
         zero_grad_mask = []
     
         for x in param_optimizer:
             name = x[0].lower()
-            if 'adapter' in name:
+            if 'fusion' in name:
                 zero_grad_mask.append(False)
             #elif 'clf' in name:
             #    zero_grad_mask.append(False)
@@ -211,7 +212,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     elif args.model == "bert":
         txt, mask, segment = txt.to(device), mask.to(device), segment.to(device)
         out = model(txt, mask, segment)
-    elif args.task == "moviescope" and args.model in ["adapter", "mmadapter", "mmadapterfull", "mmadapterseq"]:
+    elif args.task == "moviescope" and args.model in ["adapter", "mmadapter", "mmadapterfus", "mmadapterfull", "mmadapterseq"]:
         if None not in (img, video, audio, metadata):
             img, video, audio, metadata = img.cuda(), video.cuda(), audio.cuda(), metadata.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -223,7 +224,7 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
         elif None not in (img, video):
             img, video = img.cuda(), video.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
-            out = model(txt, mask, segment, img=img, video=video)
+            out = model(txt, mask, segment, img, video)
         elif None not in (img, audio):
             img, audio = img.cuda(), audio.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -377,7 +378,7 @@ def train(args):
     # Test that only adapter weights are being trained
     #'''
     for ((k1, v1), (k2, v2)) in zip(state_dict_pre.items(), model.state_dict().items()):
-        if "adapter" in k1.lower():
+        if "fusion" in k1.lower():
             if torch.equal(v1, v2):
                 print(f"Adapter weigths equal: {k1}")
             else:

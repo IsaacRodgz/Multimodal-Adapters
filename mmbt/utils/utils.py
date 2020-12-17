@@ -27,7 +27,8 @@ def set_seed(seed):
 
 
 def save_checkpoint(state, is_best, checkpoint_path, filename="checkpoint.pt"):
-    filter_func = lambda x: "adapter" in x
+    #filter_func = lambda x: "adapter" in x
+    filter_func = lambda x: "fusion" in x
     state['state_dict'] = {k: v for (k, v) in state['state_dict'].items() if filter_func(k)}
     filename = os.path.join(checkpoint_path, filename)
     torch.save(state, filename)

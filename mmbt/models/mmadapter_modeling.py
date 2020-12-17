@@ -127,7 +127,7 @@ class BertMultimodalAdapter(nn.Module):
         self.m_adapter_down.apply(self.init_bert_weights)
         #self.m_adapter_up.apply(self.init_bert_weights)
 
-    def forward(self, hidden_states, mod=None):
+    def forward(self, hidden_states, residual, mod=None):
         adapted_hidden_states = self.adapter_down(hidden_states)
         adapted_m_hidden_states = self.m_adapter_down(mod)
         
@@ -139,7 +139,7 @@ class BertMultimodalAdapter(nn.Module):
         
         up = self.adapter_up(mixed)
         adapted_hidden_states = up
-        return adapted_hidden_states + hidden_states, up
+        return adapted_hidden_states + residual, up
     
     @staticmethod
     def init_bert_weights(module):
@@ -269,6 +269,8 @@ class BertMultimodalFusion(nn.Module):
         #         "The hidden size (%d) is not a multiple of the number of attention "
         #         "heads (%d)" % (config.hidden_size, config.num_attention_heads))
         self.config = config
+        
+        self.dropout = nn.Dropout(0.1)
 
         self.query = nn.Linear(config.hidden_sz, config.hidden_sz)
         self.query.apply(BertMultimodalAdapter.init_bert_weights)
@@ -278,13 +280,11 @@ class BertMultimodalFusion(nn.Module):
 
         self.value = nn.Linear(config.hidden_sz, config.hidden_sz, bias=False)
         self.value.apply(BertMultimodalAdapter.init_bert_weights)
-        '''
-        if self.config.adapter_fusion["value_initialized"]:
-            self.value.weight.data = (
-                torch.zeros(int(config.hidden_size), int(config.hidden_size)) + 0.000001
-            ).fill_diagonal_(1.0)
+        self.value.weight.data = (
+            torch.zeros(int(config.hidden_sz), int(config.hidden_sz)) + 0.000001
+        ).fill_diagonal_(1.0)
         
-
+        '''
         if self.config.adapter_fusion["temperature"]:
             self.T = 50.0
         else:

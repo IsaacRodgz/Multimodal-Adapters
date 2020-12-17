@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import math
+import os
+from collections import OrderedDict
 from mmbt.models.mmadapter_model_mixin import ModelAdaptersMixin
 from mmbt.models.mmadapter_modeling import BertAdapter, BertMultimodalAdapter, BertMultimodalFusion
 
@@ -15,12 +17,21 @@ class BertSelfOutputAdaptersMixin:
         self.adapter_fusion_layer = nn.ModuleDict(dict())
 
     def add_adapter(self, adapter_name: str, config):
-        adapter = BertMultimodalAdapter(
-            hidden_size=config.hidden_size,
-            m_hidden_size=config.modality_size,
-            adapter_size=config.adapter_size,
-            adapter_activation=config.adapter_activation
-        )
+        if adapter_name == "image":
+            adapter = BertMultimodalAdapter(
+                hidden_size=config.hidden_size,
+                m_hidden_size=config.modality_size,
+                adapter_size=config.adapter_size,
+                adapter_activation=config.adapter_activation
+            )
+        elif adapter_name == "video":
+            adapter = BertMultimodalAdapter(
+                hidden_size=config.hidden_size,
+                m_hidden_size=config.modality_size,
+                adapter_size=config.adapter_vid_size,
+                adapter_activation=config.adapter_activation
+            )
+        
         if adapter_name in ["image", "video", "audio", "metadata"]:
             self.attention_multimodal_task_adapters[adapter_name] = adapter
         else:
@@ -47,13 +58,13 @@ class BertSelfOutputAdaptersMixin:
                         param.requires_grad = True
         
         if unfreeze_fusion:
-            if isinstance(adapter_names[0], str):
+            if isinstance(adapter_names, str):
                 adapter_names = [adapter_names]
-            for adapter_fusion_group in adapter_names:
-                fusion_name = ",".join(adapter_fusion_group)
-                if fusion_name in self.adapter_fusion_layer:
-                    for param in self.adapter_fusion_layer[fusion_name].parameters():
-                        param.requires_grad = True
+            #for adapter_fusion_group in adapter_names:
+            fusion_name = ",".join(adapter_names)
+            if fusion_name in self.adapter_fusion_layer:
+                for param in self.adapter_fusion_layer[fusion_name].parameters():
+                    param.requires_grad = True
     
     def get_adapter_preparams(
         self,
@@ -124,12 +135,47 @@ class BertSelfOutputAdaptersMixin:
             
             adapter_layer = self.get_adapter_layer(adapter_stack[0])
             if adapter_layer is not None:
-                hidden_states, _ = adapter_layer(hidden_states, mod)
+                hidden_states, _ = adapter_layer(hidden_states, residual, mod)
 
             return hidden_states
         
         else:
-            return self.adapter_fusion(hidden_states, adapter_stack, residual, query)
+            return self.adapter_fusion(hidden_states, mod, adapter_stack, residual, query)
+    
+    def adapter_fusion(self, hidden_states, mod, adapter_stack, residual, query):
+        """
+        If more than one adapter name is set for a stack layer, we fuse the adapters.
+        For this, we pass through every adapter and learn an attention-like weighting of each adapter.
+        The information stored in each of the adapters is thus fused together wrt the current example.
+        Args:
+            hidden_states: output of the previous transformer layer or adapter
+            adapter_stack: names of adapters for the current stack. Iff len(adapter_stack) == 1, we pass through a
+                            single adapter. iff len(adapter_stack) > 1 we fuse the adapters
+            residual: residual of the previous layer
+            query: query by which we attend over the adapters
+        Returns: hidden_states
+        """
+
+        up_list = []
+
+        for i, adapter_name in enumerate(adapter_stack):
+            adapter_layer = self.get_adapter_layer(adapter_name)
+            if adapter_layer is not None:
+                intermediate_output, up = adapter_layer(hidden_states, residual, mod[i])
+                up_list.append(up)
+        if len(up_list) > 0:
+            up_list = torch.stack(up_list)
+            up_list = up_list.permute(1, 2, 0, 3)
+
+            fusion_name = ",".join(adapter_stack)
+
+            hidden_states = self.adapter_fusion_layer[fusion_name](
+                query,
+                up_list,
+                up_list,
+                residual,
+            )
+        return hidden_states
 
     def adapters_forward(self, hidden_states, input_tensor, mod, adapter_names=None):
         
@@ -152,12 +198,21 @@ class BertOutputAdaptersMixin:
         self.adapter_fusion_layer = nn.ModuleDict(dict())
 
     def add_adapter(self, adapter_name: str, config):
-        adapter = BertMultimodalAdapter(
-            hidden_size=config.hidden_size,
-            m_hidden_size=config.modality_size,
-            adapter_size=config.adapter_size,
-            adapter_activation=config.adapter_activation
-        )
+        if adapter_name == "image":
+            adapter = BertMultimodalAdapter(
+                hidden_size=config.hidden_size,
+                m_hidden_size=config.modality_size,
+                adapter_size=config.adapter_size,
+                adapter_activation=config.adapter_activation
+            )
+        elif adapter_name == "video":
+            adapter = BertMultimodalAdapter(
+                hidden_size=config.hidden_size,
+                m_hidden_size=config.modality_size,
+                adapter_size=config.adapter_vid_size,
+                adapter_activation=config.adapter_activation
+            )
+        
         if adapter_name in ["image", "video", "audio", "metadata"]:
             self.attention_multimodal_task_adapters[adapter_name] = adapter
         else:
@@ -184,13 +239,13 @@ class BertOutputAdaptersMixin:
                         param.requires_grad = True
                         
         if unfreeze_fusion:
-            if isinstance(adapter_names[0], str):
+            if isinstance(adapter_names, str):
                 adapter_names = [adapter_names]
-            for adapter_fusion_group in adapter_names:
-                fusion_name = ",".join(adapter_fusion_group)
-                if fusion_name in self.adapter_fusion_layer:
-                    for param in self.adapter_fusion_layer[fusion_name].parameters():
-                        param.requires_grad = True
+            #for adapter_fusion_group in adapter_names:
+            fusion_name = ",".join(adapter_names)
+            if fusion_name in self.adapter_fusion_layer:
+                for param in self.adapter_fusion_layer[fusion_name].parameters():
+                    param.requires_grad = True
     
     def get_adapter_preparams(
         self,
@@ -261,12 +316,47 @@ class BertOutputAdaptersMixin:
                 
             adapter_layer = self.get_adapter_layer(adapter_stack[0])
             if adapter_layer is not None:
-                hidden_states, _ = adapter_layer(hidden_states, mod)
+                hidden_states, _ = adapter_layer(hidden_states, residual, mod)
 
             return hidden_states
         
         else:
-            return self.adapter_fusion(hidden_states, adapter_stack, residual, query)
+            return self.adapter_fusion(hidden_states, mod, adapter_stack, residual, query)
+    
+    def adapter_fusion(self, hidden_states, mod, adapter_stack, residual, query):
+        """
+        If more than one adapter name is set for a stack layer, we fuse the adapters.
+        For this, we pass through every adapter and learn an attention-like weighting of each adapter.
+        The information stored in each of the adapters is thus fused together wrt the current example.
+        Args:
+            hidden_states: output of the previous transformer layer or adapter
+            adapter_stack: names of adapters for the current stack. Iff len(adapter_stack) == 1, we pass through a
+                            single adapter. iff len(adapter_stack) > 1 we fuse the adapters
+            residual: residual of the previous layer
+            query: query by which we attend over the adapters
+        Returns: hidden_states
+        """
+
+        up_list = []
+
+        for i, adapter_name in enumerate(adapter_stack):
+            adapter_layer = self.get_adapter_layer(adapter_name)
+            if adapter_layer is not None:
+                intermediate_output, up = adapter_layer(hidden_states, residual, mod[i])
+                up_list.append(up)
+        if len(up_list) > 0:
+            up_list = torch.stack(up_list)
+            up_list = up_list.permute(1, 2, 0, 3)
+
+            fusion_name = ",".join(adapter_stack)
+
+            hidden_states = self.adapter_fusion_layer[fusion_name](
+                query,
+                up_list,
+                up_list,
+                residual,
+            )
+        return hidden_states
 
     def adapters_forward(self, hidden_states, input_tensor, mod, adapter_names=None):
         
@@ -372,3 +462,59 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
     
     def add_fusion_layer(self, adapter_names, config):
         self.encoder.add_fusion_layer(adapter_names, config)
+
+    def load_adapter(self, adapter_name: str, adapter_dir: str, old_name: str = None):
+        self.add_adapter(adapter_name)
+        adapter_state_dict = torch.load(os.path.join(adapter_dir, "model_best.pt"))["state_dict"]
+        
+        new_state_dict = OrderedDict()
+        for k, v in adapter_state_dict.items():
+            name = k[7:] # remove `module.`
+            new_state_dict[name] = v
+        adapter_state_dict = new_state_dict
+                
+        if old_name:
+            rename_func = lambda k: k.replace("_adapters.{}".format(old_name), "_adapters.{}".format(adapter_name))
+            adapter_state_dict = self.rename_state_dict(adapter_state_dict, rename_func)
+        
+        missing_keys, unexpected_keys = self._load_module_state_dict(
+            self, adapter_state_dict, start_prefix="enc.bert."
+        )
+    
+    def rename_state_dict(self, state_dict, rename_func):
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_k = rename_func(k)
+            new_state_dict[new_k] = v
+        return new_state_dict
+    
+    @staticmethod
+    def _load_module_state_dict(module, state_dict, start_prefix=""):
+        missing_keys = []
+        unexpected_keys = []
+        error_msgs = []
+
+        # copy state_dict so _load_from_state_dict can modify it
+        metadata = getattr(state_dict, "_metadata", None)
+        state_dict = state_dict.copy()
+        if metadata is not None:
+            state_dict._metadata = metadata
+
+        def load(module, prefix=""):
+            local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
+            module._load_from_state_dict(
+                state_dict, prefix, local_metadata, True, missing_keys, unexpected_keys, error_msgs
+            )
+            for name, child in module._modules.items():
+                if child is not None:
+                    load(child, prefix + name + ".")
+
+        load(module, prefix=start_prefix)
+
+        if len(error_msgs) > 0:
+            raise RuntimeError(
+                "Error(s) in loading state_dict for {}:\n\t{}".format(
+                    module.__class__.__name__, "\n\t".join(error_msgs)
+                )
+            )
+        return missing_keys, unexpected_keys
