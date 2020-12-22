@@ -38,7 +38,7 @@ class BertMultimodalAdapterFusionEncoder(nn.Module):
         self.bert.load_adapter("video", os.path.join(directory, "HoulsbyMoviescopeVideoSeed4_model_run"), "image")
         self.bert.add_fusion_layer(["image", "video"], args)
         self.bert.train_fusion(["image", "video"])
-        #import pdb;pdb.set_trace()
+        
         self.img_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
         self.vid_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
 

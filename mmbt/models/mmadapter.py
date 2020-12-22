@@ -7,6 +7,7 @@ from pytorch_pretrained_bert.modeling import BertLayerNorm
 
 from mmbt.models.modeling_bert import BertModel
 from mmbt.models.mmadapter_modeling import Activation_Function_Class
+from mmbt.models.image import ImageEncoder
 
 
 class AudioEncoder(nn.Module):
@@ -40,11 +41,19 @@ class BertMultimodalAdapterEncoder(nn.Module):
         
         if self.args.adapter_modality_type == "audio":
             self.audio_enc = AudioEncoder(args)
+        if args.task == "mmimdb":
+            self.img_enc = ImageEncoder(args)
 
     def forward(self, input_txt, attention_mask, segment, mod=None):        
         if self.args.adapter_modality_type == "video":
             mod = self.modality_project(torch.mean(mod, dim=1))
-        elif self.args.adapter_modality_type == "image" or self.args.meta:
+        elif self.args.adapter_modality_type == "image":
+            if self.args.task == "mmimdb":
+                mod = self.img_enc(mod)
+                mod = self.modality_project(mod.squeeze(1))
+            else:
+                mod = self.modality_project(mod)
+        elif  self.args.meta:
             mod = self.modality_project(mod)
         elif self.args.adapter_modality_type == "audio":
             mod = self.audio_enc(mod)
