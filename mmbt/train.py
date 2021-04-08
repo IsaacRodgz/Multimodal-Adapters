@@ -113,10 +113,10 @@ def get_optimizer(model, args):
     
         for x in param_optimizer:
             name = x[0].lower()
-            if 'fusion' in name:
+            if 'adapter' in name:
                 zero_grad_mask.append(False)
-            #elif 'clf' in name:
-            #    zero_grad_mask.append(False)
+            elif 'clf' in name:
+                zero_grad_mask.append(False)
             else:
                 zero_grad_mask.append(True)
 
@@ -153,6 +153,18 @@ def model_eval(i_epoch, data, model, args, criterion, store_preds=False, output_
                 loss, out, tgt, gates = model_forward(i_epoch, model, args, criterion, batch, output_gates)
             else:
                 loss, out, tgt = model_forward(i_epoch, model, args, criterion, batch)
+                
+            '''
+            reg_loss = None
+            for name, param in model.named_parameters():
+                if 'adapter_fusion_layer' in name and 'value' in name:
+                    if reg_loss is None:
+                        reg_loss = param.norm(2)
+                    else:
+                        reg_loss = reg_loss + param.norm(2)
+            
+            loss += (reg_loss * 1e-3)
+            '''
             losses.append(loss.item())
 
             if args.task_type == "multilabel":
@@ -205,6 +217,14 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
     freeze_txt = i_epoch < args.freeze_txt
     
     device = next(model.parameters()).device
+    
+    '''
+    for param in model.module.enc.img_enc.parameters():
+        param.requires_grad = not freeze_img
+    for name, param in model.module.enc.bert.encoder.named_parameters():
+        if 'adapter' in name:
+            param.requires_grad = not freeze_txt
+    '''
 
     if args.model == "bow":
         txt = txt.cuda()
@@ -252,6 +272,10 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
         else:
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment)
+    elif args.model in ["mmadapter"]:
+        img = img.cuda()
+        txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+        out = model(txt, mask, segment, img)
     else:
         raise ValueError("Not valid model or modality option")
     '''
@@ -284,6 +308,9 @@ def train(args):
     train_loader, val_loader, test_loader = get_data_loaders(args)
 
     model = get_model(args)
+    
+    for param in model.clf.parameters():
+        param.requires_grad = True
 
     criterion = get_criterion(args)
     optimizer = get_optimizer(model, args)
@@ -298,7 +325,7 @@ def train(args):
         model = nn.DataParallel(model)
     model.cuda()
     
-    state_dict_pre = copy.deepcopy(model.state_dict())
+    #state_dict_pre = copy.deepcopy(model.state_dict())
 
     torch.save(args, os.path.join(args.savedir, "args.pt"))
 
@@ -324,6 +351,17 @@ def train(args):
 
         for batch in tqdm(train_loader, total=len(train_loader)):
             loss, _, _ = model_forward(i_epoch, model, args, criterion, batch)
+            '''
+            reg_loss = None
+            for name, param in model.named_parameters():
+                if 'adapter_fusion_layer' in name and 'value' in name:
+                    if reg_loss is None:
+                        reg_loss = param.norm(2)
+                    else:
+                        reg_loss = reg_loss + param.norm(2)
+            
+            loss += (reg_loss * 1e-3)
+            '''
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
@@ -340,7 +378,7 @@ def train(args):
         log_metrics("Val", metrics, args, logger)
 
         tuning_metric = (
-            metrics["auc_pr_micro"] if args.task_type == "multilabel" else metrics["wighted_f1"]
+            metrics["auc_pr_micro"] if args.task == "moviescope" else metrics["micro_f1"]
         )
         scheduler.step(tuning_metric)
         is_improvement = tuning_metric > best_metric
@@ -376,9 +414,9 @@ def train(args):
     log_metrics(f"Test - ", test_metrics, args, logger)
     
     # Test that only adapter weights are being trained
-    #'''
+    '''
     for ((k1, v1), (k2, v2)) in zip(state_dict_pre.items(), model.state_dict().items()):
-        if "fusion" in k1.lower():
+        if "adapter" in k1.lower():
             if torch.equal(v1, v2):
                 print(f"Adapter weigths equal: {k1}")
             else:
@@ -388,7 +426,7 @@ def train(args):
                 continue
             else:
                 print(f"BERT weigths different: {k1}")
-    #'''
+    '''
 
 
 def test(args):

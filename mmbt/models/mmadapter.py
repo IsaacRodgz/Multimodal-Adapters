@@ -50,7 +50,7 @@ class BertMultimodalAdapterEncoder(nn.Module):
         elif self.args.adapter_modality_type == "image":
             if self.args.task == "mmimdb":
                 mod = self.img_enc(mod)
-                mod = self.modality_project(mod.squeeze(1))
+                mod = self.modality_project(torch.mean(mod, dim=1))
             else:
                 mod = self.modality_project(mod)
         elif  self.args.meta:

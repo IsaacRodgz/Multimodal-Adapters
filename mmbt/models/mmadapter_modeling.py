@@ -295,6 +295,8 @@ class BertMultimodalFusion(nn.Module):
         self.reduction = self.T / 1000.0
 
     def forward(self, query, key, value, residual):
+        # query: [batch_size, seq_size, hidden_dim]
+        # key, value: [batch_size, seq_size, num_adapters, hidden_dim]
 
         #if self.config.adapter_fusion["residual_before"]:
         #    value += residual[:, :, None, :].repeat(1, 1, value.size(2), 1)
@@ -328,3 +330,65 @@ class BertMultimodalFusion(nn.Module):
         context_layer += residual
 
         return context_layer
+
+class BertMultimodalFusion_(nn.Module):
+    """
+    Implementation of an AdapterFusion block.
+    """
+
+    def __init__(self, config):
+        super(BertMultimodalFusion, self).__init__()
+        # if config.hidden_size % config.num_attention_heads != 0:
+        #     raise ValueError(
+        #         "The hidden size (%d) is not a multiple of the number of attention "
+        #         "heads (%d)" % (config.hidden_size, config.num_attention_heads))
+        self.config = config
+        
+        seq_list = []
+        m_seq_list = [] # Complementary modality
+        
+        # modality1 down projection
+        self.layer_norm_before = nn.LayerNorm(config.hidden_sz)
+        seq_list.append(self.layer_norm_before)
+        seq_list.append(nn.Linear(config.hidden_sz, config.adapter_size))
+        self.non_linearity = Activation_Function_Class(config.adapter_activation)
+        seq_list.append(self.non_linearity)
+        
+        # modality2 down projection
+        self.m_layer_norm_before = nn.LayerNorm(config.hidden_sz)
+        m_seq_list.append(self.m_layer_norm_before)
+        m_seq_list.append(nn.Linear(config.hidden_sz, config.adapter_size))
+        self.m_non_linearity = Activation_Function_Class(config.adapter_activation)
+        m_seq_list.append(self.m_non_linearity)
+        
+        # Down projection
+        self.adapter_down = nn.Sequential(*seq_list)
+        self.m_adapter_down = nn.Sequential(*m_seq_list)
+        
+        # Multimodality gated combination
+        self.gate = nn.Linear(config.adapter_size*2, config.adapter_size, bias=False)
+        
+        # Up projection
+        self.adapter_up = nn.Linear(config.adapter_size, config.hidden_sz)
+        #self.m_adapter_up = nn.Linear(adapter_size, m_hidden_size)
+        #self.m_dropout = nn.Dropout(0.2)
+        
+        self.adapter_down.apply(BertMultimodalAdapter.init_bert_weights)
+        self.adapter_up.apply(BertMultimodalAdapter.init_bert_weights)
+        self.m_adapter_down.apply(BertMultimodalAdapter.init_bert_weights)
+        #self.m_adapter_up.apply(self.init_bert_weights)
+
+    def forward(self, query, key, value, residual):
+        # query: [batch_size, seq_size, hidden_dim]
+        # key, value: [batch_size, seq_size, num_adapters, hidden_dim]
+        #import pdb; pdb.set_trace()
+
+        adapted_hidden_states = self.adapter_down(key[:,:,0])
+        adapted_m_hidden_states = self.m_adapter_down(key[:,:,1])
+
+        input_cat = torch.cat((adapted_hidden_states, adapted_m_hidden_states), dim=2)
+        scores = F.sigmoid(self.gate(input_cat))
+        mixed = scores*adapted_hidden_states + (1-scores)*adapted_m_hidden_states
+        
+        up = self.adapter_up(mixed)
+        return up + residual
