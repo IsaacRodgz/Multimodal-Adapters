@@ -337,7 +337,7 @@ class BertMultimodalFusion_(nn.Module):
     """
 
     def __init__(self, config):
-        super(BertMultimodalFusion, self).__init__()
+        super(BertMultimodalFusion_, self).__init__()
         # if config.hidden_size % config.num_attention_heads != 0:
         #     raise ValueError(
         #         "The hidden size (%d) is not a multiple of the number of attention "

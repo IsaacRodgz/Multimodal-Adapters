@@ -241,6 +241,10 @@ def model_forward(i_epoch, model, args, criterion, batch, gmu_gate=False):
             img, video, audio = img.cuda(), video.cuda(), audio.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
             out = model(txt, mask, segment, img=img, video=video, audio=audio)
+        elif None not in (img, video, metadata):
+            img, video, metadata = img.cuda(), video.cuda(), metadata.cuda()
+            txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
+            out = model(txt, mask, segment, img=img, video=video, metadata=metadata)
         elif None not in (img, video):
             img, video = img.cuda(), video.cuda()
             txt, mask, segment = txt.cuda(), mask.cuda(), segment.cuda()
@@ -465,7 +469,15 @@ def cli_main():
     args, remaining_args = parser.parse_known_args()
     assert remaining_args == [], remaining_args
 
-    train(args)
+    #train(args)
+    
+    for i in range(2, 6):
+        args.seed = i
+        args.savedir = f'/home/est_posgrado_isaac.bribiesca/Multimodal-Adapters/model_save_mmbtAdapter'
+        args.name = f'HoulsbyMoviescopeImgVidMetaBothGMUSeed{i}_model_run'
+
+        train(args)
+    
 
 
 if __name__ == "__main__":

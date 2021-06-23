@@ -80,6 +80,31 @@ class GMU(nn.Module):
         return z1*h1 + z2*h2, torch.cat((z1, z2), dim=1)
 
 
+class TextShifting3Layer(nn.Module):
+    """ Layer inspired by 'Gated multimodal networks, Arevalo1 et al.' (https://arxiv.org/abs/1702.01992) """
+    def __init__(self, size_in1, size_in2, size_in3, size_out):
+        super(TextShifting3Layer, self).__init__()
+        self.size_in1, self.size_in2, self.size_in3, self.size_out = size_in1, size_in2, size_in3, size_out
+        
+        self.hidden1 = nn.Linear(size_in1, size_out, bias=False)
+        self.hidden2 = nn.Linear(size_in2, size_out, bias=False)
+        self.hidden3 = nn.Linear(size_in3, size_out, bias=False)
+        self.x1_gate = nn.Linear(size_in1+size_in2+size_in3, size_out, bias=False)
+        self.x2_gate = nn.Linear(size_in1+size_in2+size_in3, size_out, bias=False)
+        self.x3_gate = nn.Linear(size_in1+size_in2+size_in3, size_out, bias=False)
+
+    def forward(self, x1, x2, x3):
+        h1 = F.tanh(self.hidden1(x1))
+        h2 = F.tanh(self.hidden2(x2))
+        h3 = F.tanh(self.hidden3(x3))
+        x_cat = torch.cat((x1, x2, x3), dim=1)
+        z1 = F.sigmoid(self.x1_gate(x_cat))
+        z2 = F.sigmoid(self.x2_gate(x_cat))
+        z3 = F.sigmoid(self.x3_gate(x_cat))
+
+        return z1*h1 + z2*h2 + z3*h3, torch.cat((z1, z2, z3), dim=1)
+
+
 class BertConfig(object):
     """Configuration class to store the configuration of a `BertModel`.
     """
@@ -261,6 +286,7 @@ class PreTrainedBertModel(nn.Module):
         config = BertConfig.from_json_file(config_file)
         # Configure adapter attributes
         config.img_hidden_sz = adapter_args['img_hidden_sz']
+        config.modality_size = adapter_args['modality_size']
         config.adapter_size = adapter_args['adapter_size']
         config.adapter_activation = adapter_args['adapter_activation']
         logger.info("Model config {}".format(config))
@@ -418,7 +444,213 @@ class BertMultimodalAdapter(nn.Module):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
+
+
+class Bert3MultimodalAdapter(nn.Module):
+    """
+    Multimodal adaptation based from "Parameter-Efficient Transfer Learning for NLP" paper:
+    https://arxiv.org/pdf/1902.00751.pdf
+    """
+
+    def __init__(self, hidden_size, m1_hidden_size, m2_hidden_size, adapter_size, adapter_activation):
+        super(Bert3MultimodalAdapter, self).__init__()
+        seq_list = []
+        m1_seq_list = [] # Complementary modality 1
+        m2_seq_list = [] # Complementary modality 2
+        
+        # BERT input down projection
+        self.layer_norm_before = nn.LayerNorm(hidden_size)
+        seq_list.append(self.layer_norm_before)
+        seq_list.append(nn.Linear(hidden_size, adapter_size))
+        self.non_linearity = Activation_Function_Class(adapter_activation)
+        seq_list.append(self.non_linearity)
+        
+        # Complementary modality 1 down projection
+        self.m1_layer_norm_before = nn.LayerNorm(m1_hidden_size)
+        m1_seq_list.append(self.m1_layer_norm_before)
+        m1_seq_list.append(nn.Linear(m1_hidden_size, adapter_size))
+        self.m1_non_linearity = Activation_Function_Class(adapter_activation)
+        m1_seq_list.append(self.m1_non_linearity)
+        
+        # Complementary modality 2 down projection
+        self.m2_layer_norm_before = nn.LayerNorm(m2_hidden_size)
+        m2_seq_list.append(self.m2_layer_norm_before)
+        m2_seq_list.append(nn.Linear(m2_hidden_size, adapter_size))
+        self.m2_non_linearity = Activation_Function_Class(adapter_activation)
+        m2_seq_list.append(self.m2_non_linearity)
+        
+        # Down projection
+        self.adapter_down = nn.Sequential(*seq_list)
+        self.m1_adapter_down = nn.Sequential(*m1_seq_list)
+        self.m2_adapter_down = nn.Sequential(*m2_seq_list)
+        
+        # Multimodality gated combination
+        self.gate1 = nn.Linear(adapter_size*3, adapter_size, bias=False)
+        self.gate2 = nn.Linear(adapter_size*3, adapter_size, bias=False)
+        self.gate3 = nn.Linear(adapter_size*3, adapter_size, bias=False)
+        
+        # Up projection
+        self.adapter_up = nn.Linear(adapter_size, hidden_size)
+        self.m1_adapter_up = nn.Linear(adapter_size, m1_hidden_size)
+        self.m2_adapter_up = nn.Linear(adapter_size, m2_hidden_size)
+        
+        self.adapter_down.apply(self.init_bert_weights)
+        self.adapter_up.apply(self.init_bert_weights)
+        self.m1_adapter_down.apply(self.init_bert_weights)
+        self.m1_adapter_up.apply(self.init_bert_weights)
+        self.m2_adapter_down.apply(self.init_bert_weights)
+        self.m2_adapter_up.apply(self.init_bert_weights)
+
+    def forward(self, hidden_states, mod1=None, mod2=None):
+        adapted_hidden_states = self.adapter_down(hidden_states)
+        adapted_m1_hidden_states = self.m1_adapter_down(mod1)
+        adapted_m2_hidden_states = self.m2_adapter_down(mod2)
+        
+        seq_len = adapted_hidden_states.shape[1]
+        adapted_m1_hidden_states_rep = adapted_m1_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        adapted_m2_hidden_states_rep = adapted_m2_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        
+        input_cat = torch.cat((adapted_hidden_states, adapted_m1_hidden_states_rep, adapted_m2_hidden_states_rep), dim=2)
+        
+        scores1 = F.sigmoid(self.gate1(input_cat))
+        scores2 = F.sigmoid(self.gate2(input_cat))
+        scores3 = F.sigmoid(self.gate3(input_cat))
+        mixed = scores1*adapted_hidden_states + scores2*adapted_m1_hidden_states_rep + scores3*adapted_m2_hidden_states_rep
+        
+        adapted_hidden_states = self.adapter_up(mixed)
+        adapted_m1_hidden_states = self.m1_adapter_up(adapted_m1_hidden_states)
+        adapted_m2_hidden_states = self.m2_adapter_up(adapted_m2_hidden_states)
+        return adapted_hidden_states + hidden_states
     
+    @staticmethod
+    def init_bert_weights(module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            # module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            # TODO I set the std to default 0.02, this might need to be changed
+            module.weight.data.normal_(mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+
+class Bert4MultimodalAdapter(nn.Module):
+    """
+    Multimodal adaptation based from "Parameter-Efficient Transfer Learning for NLP" paper:
+    https://arxiv.org/pdf/1902.00751.pdf
+    """
+
+    def __init__(self, hidden_size, m1_hidden_size, m2_hidden_size, m3_hidden_size, adapter_size, adapter_activation):
+        super(Bert4MultimodalAdapter, self).__init__()
+        seq_list = []
+        m1_seq_list = [] # Complementary modality 1
+        m2_seq_list = [] # Complementary modality 2
+        m3_seq_list = [] # Complementary modality 3
+        
+        # BERT input down projection
+        self.layer_norm_before = nn.LayerNorm(hidden_size)
+        seq_list.append(self.layer_norm_before)
+        seq_list.append(nn.Linear(hidden_size, adapter_size))
+        self.non_linearity = Activation_Function_Class(adapter_activation)
+        seq_list.append(self.non_linearity)
+        
+        # Complementary modality 1 down projection
+        self.m1_layer_norm_before = nn.LayerNorm(m1_hidden_size)
+        m1_seq_list.append(self.m1_layer_norm_before)
+        m1_seq_list.append(nn.Linear(m1_hidden_size, adapter_size))
+        self.m1_non_linearity = Activation_Function_Class(adapter_activation)
+        m1_seq_list.append(self.m1_non_linearity)
+        
+        # Complementary modality 2 down projection
+        self.m2_layer_norm_before = nn.LayerNorm(m2_hidden_size)
+        m2_seq_list.append(self.m2_layer_norm_before)
+        m2_seq_list.append(nn.Linear(m2_hidden_size, adapter_size))
+        self.m2_non_linearity = Activation_Function_Class(adapter_activation)
+        m2_seq_list.append(self.m2_non_linearity)
+        
+        # Complementary modality 3 down projection
+        self.m3_layer_norm_before = nn.LayerNorm(m3_hidden_size)
+        m3_seq_list.append(self.m3_layer_norm_before)
+        m3_seq_list.append(nn.Linear(m3_hidden_size, adapter_size))
+        self.m3_non_linearity = Activation_Function_Class(adapter_activation)
+        m3_seq_list.append(self.m3_non_linearity)
+        
+        # Down projection
+        self.adapter_down = nn.Sequential(*seq_list)
+        self.m1_adapter_down = nn.Sequential(*m1_seq_list)
+        self.m2_adapter_down = nn.Sequential(*m2_seq_list)
+        self.m3_adapter_down = nn.Sequential(*m3_seq_list)
+        
+        # Multimodality gated combination
+        self.gate1 = nn.Linear(adapter_size*4, adapter_size, bias=False)
+        self.gate2 = nn.Linear(adapter_size*4, adapter_size, bias=False)
+        self.gate3 = nn.Linear(adapter_size*4, adapter_size, bias=False)
+        self.gate4 = nn.Linear(adapter_size*4, adapter_size, bias=False)
+        
+        # Up projection
+        self.adapter_up = nn.Linear(adapter_size, hidden_size)
+        self.m1_adapter_up = nn.Linear(adapter_size, m1_hidden_size)
+        self.m2_adapter_up = nn.Linear(adapter_size, m2_hidden_size)
+        self.m3_adapter_up = nn.Linear(adapter_size, m3_hidden_size)
+        
+        self.adapter_down.apply(self.init_bert_weights)
+        self.adapter_up.apply(self.init_bert_weights)
+        self.m1_adapter_down.apply(self.init_bert_weights)
+        self.m1_adapter_up.apply(self.init_bert_weights)
+        self.m2_adapter_down.apply(self.init_bert_weights)
+        self.m2_adapter_up.apply(self.init_bert_weights)
+        self.m3_adapter_down.apply(self.init_bert_weights)
+        self.m3_adapter_up.apply(self.init_bert_weights)
+
+    def forward(self, hidden_states, mod1=None, mod2=None, mod3=None):
+        adapted_hidden_states = self.adapter_down(hidden_states)
+        adapted_m1_hidden_states = self.m1_adapter_down(mod1)
+        adapted_m2_hidden_states = self.m2_adapter_down(mod2)
+        adapted_m3_hidden_states = self.m3_adapter_down(mod3)
+        
+        seq_len = adapted_hidden_states.shape[1]
+        adapted_m1_hidden_states_rep = adapted_m1_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        adapted_m2_hidden_states_rep = adapted_m2_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        adapted_m3_hidden_states_rep = adapted_m3_hidden_states.unsqueeze(1).repeat(1,seq_len,1)
+        
+        input_cat = torch.cat((adapted_hidden_states,
+                               adapted_m1_hidden_states_rep,
+                               adapted_m2_hidden_states_rep,
+                               adapted_m3_hidden_states_rep), dim=2)
+        
+        scores1 = F.sigmoid(self.gate1(input_cat))
+        scores2 = F.sigmoid(self.gate2(input_cat))
+        scores3 = F.sigmoid(self.gate3(input_cat))
+        scores4 = F.sigmoid(self.gate3(input_cat))
+        mixed = scores1*adapted_hidden_states +\
+                scores2*adapted_m1_hidden_states_rep +\
+                scores3*adapted_m2_hidden_states_rep +\
+                scores4*adapted_m3_hidden_states_rep
+        
+        adapted_hidden_states = self.adapter_up(mixed)
+        #adapted_m1_hidden_states = self.m1_adapter_up(adapted_m1_hidden_states)
+        #adapted_m2_hidden_states = self.m2_adapter_up(adapted_m2_hidden_states)
+        return adapted_hidden_states + hidden_states, torch.cat((scores1, scores2, scores3, scores4), dim=1)
+    
+    @staticmethod
+    def init_bert_weights(module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            # module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            # TODO I set the std to default 0.02, this might need to be changed
+            module.weight.data.normal_(mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
 
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
@@ -426,17 +658,19 @@ class BertSelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size,
-                                             m_hidden_size=config.img_hidden_sz,
+        self.Adapter = Bert4MultimodalAdapter(hidden_size=config.hidden_size,
+                                             m1_hidden_size=config.modality_size,
+                                             m2_hidden_size=config.modality_size,
+                                             m3_hidden_size=config.modality_size,
                                              adapter_size=config.adapter_size,
                                              adapter_activation=config.adapter_activation)
 
-    def forward(self, hidden_states, input_tensor, mod=None):
+    def forward(self, hidden_states, input_tensor, mod1=None, mod2=None, mod3=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states, mod = self.Adapter(hidden_states, mod)
+        hidden_states, _ = self.Adapter(hidden_states, mod1, mod2, mod3)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states, mod
+        return hidden_states
 
 
 class BertAttention(nn.Module):
@@ -445,10 +679,10 @@ class BertAttention(nn.Module):
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
 
-    def forward(self, input_tensor, attention_mask, mod=None):
+    def forward(self, input_tensor, attention_mask, mod1=None, mod2=None, mod3=None):
         self_output = self.self(input_tensor, attention_mask)
-        attention_output, mod = self.output(self_output, input_tensor, mod)
-        return attention_output, mod
+        attention_output = self.output(self_output, input_tensor, mod1, mod2, mod3)
+        return attention_output
 
 
 class BertOutput(nn.Module):
@@ -457,17 +691,19 @@ class BertOutput(nn.Module):
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.Adapter = BertMultimodalAdapter(hidden_size=config.hidden_size,
-                                             m_hidden_size=config.img_hidden_sz,
+        self.Adapter = Bert4MultimodalAdapter(hidden_size=config.hidden_size,
+                                             m1_hidden_size=config.modality_size,
+                                             m2_hidden_size=config.modality_size,
+                                             m3_hidden_size=config.modality_size,
                                              adapter_size=config.adapter_size,
                                              adapter_activation=config.adapter_activation)
 
-    def forward(self, hidden_states, input_tensor, mod=None):
+    def forward(self, hidden_states, input_tensor, mod1=None, mod2=None, mod3=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states, mod = self.Adapter(hidden_states, mod)
+        hidden_states, _ = self.Adapter(hidden_states, mod1, mod2, mod3)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states, mod
+        return hidden_states
 
 
 class BertLayer(nn.Module):
@@ -477,10 +713,10 @@ class BertLayer(nn.Module):
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
-    def forward(self, hidden_states, attention_mask, mod=None):
-        attention_output, mod_ = self.attention(hidden_states, attention_mask, mod)
+    def forward(self, hidden_states, attention_mask, mod1=None, mod2=None, mod3=None):
+        attention_output = self.attention(hidden_states, attention_mask, mod1, mod2, mod3)
         intermediate_output = self.intermediate(attention_output)
-        layer_output, _ = self.output(intermediate_output, attention_output, mod_)
+        layer_output = self.output(intermediate_output, attention_output, mod1, mod2, mod3)
         return layer_output
 
 
@@ -490,10 +726,10 @@ class BertEncoder(nn.Module):
         layer = BertLayer(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
-    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, mod=None):
+    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, mod1=None, mod2=None, mod3=None):
         all_encoder_layers = []
         for layer_module in self.layer:
-            hidden_states = layer_module(hidden_states, attention_mask, mod)
+            hidden_states = layer_module(hidden_states, attention_mask, mod1, mod2, mod3)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
         if not output_all_encoded_layers:
@@ -546,7 +782,7 @@ class BertModel(PreTrainedBertModel):
         self.pooler = BertPooler(config)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, mod=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, mod1=None, mod2=None, mod3=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -571,7 +807,9 @@ class BertModel(PreTrainedBertModel):
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
                                       output_all_encoded_layers=output_all_encoded_layers,
-                                      mod=mod)
+                                      mod1=mod1,
+                                      mod2=mod2,
+                                      mod3=mod3)
         sequence_output = encoded_layers[-1]
         pooled_output = self.pooler(sequence_output)
         if not output_all_encoded_layers:
@@ -585,12 +823,18 @@ class BertTextEncoder(nn.Module):
         self.args = args
         
         self.bert = BertModel.from_pretrained(args.bert_model, adapter_args=vars(args))
+        self.modality1_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
+        self.modality2_project = nn.Linear(in_features=args.img_hidden_sz, out_features=args.modality_size)
+        self.modality3_project = nn.Linear(in_features=312, out_features=args.modality_size)
         #self.img_enc = ImageEncoder(args)
 
-    def forward(self, input_txt, attention_mask, segment, img):
+    def forward(self, input_txt, attention_mask, segment, img, video, meta):
         bsz = input_txt.size(0)
         #img = self.img_enc(img).squeeze(1)
-        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod=img)
+        img = self.modality1_project(img)
+        video = self.modality2_project(torch.mean(video, dim=1))
+        meta = self.modality3_project(meta)
+        out = self.bert(input_ids=input_txt, token_type_ids=segment, attention_mask=attention_mask, mod1=img, mod2=video, mod3=meta)
         
         return out[1]
     
@@ -641,6 +885,6 @@ class MultimodalAdapterFullClf(nn.Module):
         self.enc = BertTextEncoder(args)
         self.clf = SimpleClassifier(args.hidden_sz, args.hidden_sz, args.n_classes, 0.0)
 
-    def forward(self, txt, mask, segment, img):
-        x = self.enc(txt, mask, segment, img)
+    def forward(self, txt, mask, segment, img, video, metadata):
+        x = self.enc(txt, mask, segment, img, video, metadata)
         return self.clf(x)
