@@ -23,6 +23,6 @@ The text input, is represented by the BERT hidden vectors $H \in \mathbb{R}^{l \
 * [MMBT](https://arxiv.org/abs/1909.02950): Supervised Multimodal Bitransformers for Classifying Images and Text
  by Kiela et al.
  
- * [GMU](https://arxiv.org/abs/1702.01992) Gated Multimodal Units for Information Fusion by Arevalo et al.
+* [GMU](https://arxiv.org/abs/1702.01992) Gated Multimodal Units for Information Fusion by Arevalo et al.
 
 * [Moviescope](https://arxiv.org/abs/1908.03180): Moviescope: Large-scale Analysis of Movies using Multiple Modalities by Cascante-Bonilla et al.
