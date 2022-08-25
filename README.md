@@ -1,6 +1,6 @@
 # Multimodal-Adapters
 
-Adapter modules with support for multimodal fusion of information (text, video, audio, etc.) using pre-trained BERT base model. For a more detailed review of the architecture, refere to my [master thesis pdf](https://cimat.repositorioinstitucional.mx/jspui/bitstream/1008/1126/1/TE%20832.pdf). in section 4.2 "Parameter-Efficient Transfer Learning for Multimodal Tasks" I describe the architectural changes made in order for the BERT model to support multimodal inputs.
+Adapter modules with support for multimodal fusion of information (text, video, audio, etc.) using pre-trained BERT base model. For a more detailed review of the architecture, refere to my [master thesis pdf](https://cimat.repositorioinstitucional.mx/jspui/bitstream/1008/1126/1/TE%20832.pdf). In section 4.2 "Parameter-Efficient Transfer Learning for Multimodal Tasks" I describe the architectural changes made in order for the BERT model to support multimodal inputs.
 
 A journal paper is on the way to present some interesting results with this architecture.
 
