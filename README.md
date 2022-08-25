@@ -12,6 +12,8 @@ The proposed architecture was used to perform experiments with a movie genre mul
 
 ![multimodal-adapter-diagram](multimodal-adapter-diagram.png)
 
+The text input, is represented by the BERT hidden vectors $H \in \mathbb{R}^{l \times 768}$ where $l$ is the text sequence length, and $m$ extra modalities ($m=4$ for the shown example). Given that the GMU module receives one vector per modality, for modalities that consist in a sequence of features (like video frames or audio spectrogram), we take the average of the sequence's elements before taking them as input to the Multimodal Adapter layer, as shown in point 1 in diagram. Once we have a single vector per modality (except for text) $M_i \in \mathbb{R}^{d_i}$ where $d_i$ represents the modality's dimension, we take the same approach as Houlsby2019 for each modality, i.e., we apply a Normalization layer together with a FeedForward down-project to reduce the vector dimension to $p$ (in this case dimension $p=64$) at point 2 of diagram, and finally apply a non-linear activation function at point 3. Unlike the original Adapter, where the FeedForward up-project is applied right after the non-linearity, here we first combine the different modalities inside the GMU module, as shown in point 4 of diagram, and once we have fused them all, we apply the FeedForward up-project to the original BERT hidden dimension (768) and add the information from the skip connection, as indicated in point 5 of the diagram.
+
 ## Experiments based on:
 
 * [Adapters](https://arxiv.org/abs/1902.00751): Parameter-Efficient Transfer Learning for NLP" by Houlsby et al.
@@ -20,5 +22,7 @@ The proposed architecture was used to perform experiments with a movie genre mul
 
 * [MMBT](https://arxiv.org/abs/1909.02950): Supervised Multimodal Bitransformers for Classifying Images and Text
  by Kiela et al.
+ 
+ * [GMU](https://arxiv.org/abs/1702.01992) Gated Multimodal Units for Information Fusion by Arevalo et al.
 
-* [Moviescope](https://arxiv.org/abs/1908.03180): Moviescope: Large-scale Analysis of Movies using Multiple Modalities by Cascante-Bonilla et. al
+* [Moviescope](https://arxiv.org/abs/1908.03180): Moviescope: Large-scale Analysis of Movies using Multiple Modalities by Cascante-Bonilla et al.
