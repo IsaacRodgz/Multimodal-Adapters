@@ -8,6 +8,10 @@ A journal paper is on the way to present some interesting results with this arch
 
 The proposed architecture was used to perform experiments with a movie genre multimodal classification task ([Moviescope](https://www.cs.virginia.edu/~pc9za/research/moviescope.html)). Multimodal-Adapter was compared with [MMBT](https://arxiv.org/abs/1909.02950), showing on par performance with a significant reduction in the number of parameters modified during finetuning. For more details about the experiments please refer section 5.5 "Multimodal Adapter Experiments" [here](https://cimat.repositorioinstitucional.mx/jspui/bitstream/1008/1126/1/TE%20832.pdf).
 
+## Multimodal Adapter Architecture
+
+![multimodal-adapter-diagram](multimodal-adapter-diagram.png)
+
 ## Experiments based on:
 
 * [Adapters](https://arxiv.org/abs/1902.00751): Parameter-Efficient Transfer Learning for NLP" by Houlsby et al.
