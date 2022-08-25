@@ -10,11 +10,11 @@ The proposed architecture was used to perform experiments with a movie genre mul
 
 ## Experiments based on:
 
-* [Adapters](https://arxiv.org/abs/1902.00751) "Parameter-Efficient Transfer Learning for NLP" by Houlsby et al.
+* [Adapters](https://arxiv.org/abs/1902.00751): Parameter-Efficient Transfer Learning for NLP" by Houlsby et al.
 
-* [Adapter Fusion](https://arxiv.org/abs/2005.00247) "AdapterFusion: Non-Destructive Task Composition for Transfer Learning" by Pfeiffer et al.
+* [Adapter Fusion](https://arxiv.org/abs/2005.00247): AdapterFusion: Non-Destructive Task Composition for Transfer Learning" by Pfeiffer et al.
 
-* [MMBT](https://arxiv.org/abs/1909.02950) "Supervised Multimodal Bitransformers for Classifying Images and Text
+* [MMBT](https://arxiv.org/abs/1909.02950): Supervised Multimodal Bitransformers for Classifying Images and Text
  by Kiela et al.
 
-* [Moviescope](https://arxiv.org/abs/1908.03180) "Moviescope: Large-scale Analysis of Movies using Multiple Modalities by Cascante-Bonilla et. al
+* [Moviescope](https://arxiv.org/abs/1908.03180): Moviescope: Large-scale Analysis of Movies using Multiple Modalities by Cascante-Bonilla et. al
